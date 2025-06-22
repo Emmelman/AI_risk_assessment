@@ -601,7 +601,14 @@ class JavaScriptCodeAnalyzer(BaseCodeAnalyzer):
         comments = []
         
         # Однострочные комментарии
-        single_line_comments = re.findall(r'//.*# src/tools/code_analyzer.py
+        single_line_comments = re.findall(r'//.*$', content, re.MULTILINE)
+        comments.extend(single_line_comments)
+        
+        # Многострочные комментарии
+        multi_line_comments = re.findall(r'/\*.*?\*/', content, re.DOTALL)
+        comments.extend(multi_line_comments)
+        
+        return comments
 
 
 class JavaCodeAnalyzer(BaseCodeAnalyzer):
@@ -775,4 +782,15 @@ class JavaCodeAnalyzer(BaseCodeAnalyzer):
         comments = []
         
         # Однострочные комментарии
-        single_line_comments = re.findall(r'//.*                                          
+        single_line_comments = re.findall(r'//.*$', content, re.MULTILINE)
+        comments.extend(single_line_comments)
+        
+        # Многострочные комментарии
+        multi_line_comments = re.findall(r'/\*.*?\*/', content, re.DOTALL)
+        comments.extend(multi_line_comments)
+        
+        # JavaDoc комментарии
+        javadoc_comments = re.findall(r'/\*\*.*?\*/', content, re.DOTALL)
+        comments.extend(javadoc_comments)
+        
+        return comments
