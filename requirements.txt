@@ -1,0 +1,35 @@
+# Core ML/AI Libraries
+langgraph>=0.2.21
+langchain>=0.2.12
+langchain-community>=0.2.11
+langchain-openai>=0.1.22
+
+# Document Processing
+python-docx>=1.1.2
+openpyxl>=3.1.2
+PyPDF2>=3.0.1
+pdfplumber>=0.10.0
+
+# Database
+sqlalchemy==2.0.23
+aiosqlite==0.19.0
+
+# HTTP/API
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Data Processing (ОБНОВЛЕННЫЕ ВЕРСИИ)
+pandas>=2.2.0
+numpy>=1.26.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Utilities
+python-dotenv==1.0.0
+click==8.1.7
+rich==13.7.0
+loguru==0.7.2
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
