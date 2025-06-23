@@ -141,7 +141,7 @@ class RiskAssessmentWorkflow:
         workflow.add_edge("batch_3_evaluation", "evaluation_collection")
         
         # Основной поток остается прежним
-        workflow.add_edge("evaluation_collection", "critic_analysis")
+        
         workflow.add_edge("critic_analysis", "quality_check")
         
         # Условные переходы из проверки качества
@@ -151,10 +151,12 @@ class RiskAssessmentWorkflow:
             {
                 "retry": "retry_evaluation",
                 "finalize": "finalization",
-                "error": "error_handling"
+                "error": "error_handling",
+                "critic": "critic_analysis"
             }
         )
-        
+        # Критик только при необходимости
+        workflow.add_edge("critic_analysis", "quality_check")  # Возврат к проверке качества
         # Из повторной оценки обратно к подготовке
         workflow.add_edge("retry_evaluation", "evaluation_preparation")
         
@@ -489,50 +491,60 @@ class RiskAssessmentWorkflow:
     
     @log_graph_node("quality_check")
     async def _quality_check_node(self, state: WorkflowState) -> WorkflowState:
-        """ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ проверка качества и принятие решения"""
+        """ПРАВИЛЬНАЯ проверка качества без обязательного критика"""
         assessment_id = state["assessment_id"]
         
         self.graph_logger.log_workflow_step(
-        assessment_id, "quality_check_start",
-        f"Начало quality_check, входящий current_step: {state.get('current_step')}"
+            assessment_id, "quality_check_start",
+            f"Начало quality_check, входящий current_step: {state.get('current_step')}"
         )
 
-        # ИСПРАВЛЕНИЕ: Получаем результаты оценки из правильного места
-        evaluation_results = state.get_successful_evaluations()
-        
-        self.graph_logger.log_workflow_step(
+        # Получаем результаты оценки
+        try:
+            evaluation_results = state.get_successful_evaluations()
+            self.graph_logger.log_workflow_step(
                 assessment_id, "quality_check_data",
                 f"Успешных оценок: {len(evaluation_results)}, типы: {list(evaluation_results.keys())}"
             )
+        except Exception as e:
+            self.graph_logger.log_workflow_step(
+                assessment_id, "quality_check_data_error",
+                f"Ошибка получения successful_evaluations: {e}"
+            )
+            evaluation_results = {}
 
         # Если нет успешных оценок, идем в обработку ошибок
         if not evaluation_results:
+            self.graph_logger.log_workflow_step(
+                assessment_id, "quality_check_no_evaluations",
+                "❌ НЕТ УСПЕШНЫХ ОЦЕНОК - устанавливаем error"
+            )
             state["current_step"] = "error"
             state["error_message"] = "Нет успешных оценок рисков"
             state["retry_needed"] = []
             return state
         
-        # Если у нас нет результатов критика, просто проверяем качество оценок
-        critic_results = state.get("critic_results", {})
+        # НОВАЯ ЛОГИКА: Сначала проверяем простые метрики качества
         
-        if not critic_results:
-            # Если критик не запускался, принимаем все оценки
-            avg_quality = 7.0  # Хорошее качество по умолчанию
-            retry_needed = []
-            
-            self.graph_logger.log_workflow_step(
-                assessment_id,
-                "quality_check_skip_critic",
-                "Критик не запускался, принимаем все оценки"
-            )
-        else:
-            # Обрабатываем результаты критика
+        # 1. Базовая оценка качества на основе количества успешных оценок
+        success_rate = len(evaluation_results) / 6  # 6 типов рисков всего
+        
+        # 2. Проверяем есть ли уже результаты критика (из предыдущего прохода)
+        critic_results = state.get("critic_results", {})
+        has_critic_results = bool(critic_results)
+        
+        self.graph_logger.log_workflow_step(
+            assessment_id, "quality_check_metrics",
+            f"Success rate: {success_rate:.2f}, имеет результаты критика: {has_critic_results}"
+        )
+        
+        if has_critic_results:
+            # Если есть результаты критика, используем их
             retry_needed = []
             quality_scores = []
             
             for risk_type, critic_result in critic_results.items():
                 try:
-                    # Проверяем формат результата критика
                     if isinstance(critic_result, dict):
                         if (critic_result.get("status") == "completed" and 
                             critic_result.get("result_data") and 
@@ -549,20 +561,29 @@ class RiskAssessmentWorkflow:
                                 
                                 if current_retries < max_retries:
                                     retry_needed.append(risk_type)
-                    else:
-                        # Если формат неожиданный, просто пропускаем
-                        quality_scores.append(7.0)  # Нейтральная оценка
-                        
+                        else:
+                            quality_scores.append(7.0)
+                            
                 except Exception as e:
                     self.graph_logger.log_workflow_step(
-                        assessment_id,
-                        "quality_check_warning",
+                        assessment_id, "quality_check_warning",
                         f"Ошибка обработки результата критика для {risk_type}: {e}"
                     )
-                    quality_scores.append(7.0)  # Fallback оценка
+                    quality_scores.append(7.0)
             
-            # Вычисляем среднее качество
             avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 7.0
+            
+        else:
+            # Если нет результатов критика, делаем базовую оценку
+            # Простая эвристика: чем больше успешных оценок, тем выше качество
+            base_quality = 5.0 + (success_rate * 5.0)  # От 5.0 до 10.0
+            avg_quality = base_quality
+            retry_needed = []
+            
+            self.graph_logger.log_workflow_step(
+                assessment_id, "quality_check_basic_assessment",
+                f"Базовая оценка качества: {avg_quality:.1f} (на основе success_rate={success_rate:.2f})"
+            )
         
         # Логируем результаты проверки качества
         self.graph_logger.log_quality_check(
@@ -572,34 +593,44 @@ class RiskAssessmentWorkflow:
             self.quality_threshold
         )
         
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильно устанавливаем следующий шаг
+        # Принимаем решение на основе качества
+        state["average_quality"] = avg_quality
+        
         if retry_needed:
-            # Есть оценки для повтора
+            # Есть оценки для повтора (только если был критик)
             state["retry_needed"] = retry_needed
-            state["average_quality"] = avg_quality
-            state["current_step"] = "retry_needed"  # Специальный маркер для маршрутизатора
+            state["current_step"] = "retry_needed"
             
             self.graph_logger.log_workflow_step(
-                assessment_id,
-                "quality_check_retry",
-                f"Необходимы повторы для: {retry_needed}"
+                assessment_id, "quality_check_retry",
+                f"✅ УСТАНОВЛЕН current_step = 'retry_needed' для: {retry_needed}"
             )
-        else:
-            # Все хорошо, переходим к финализации
+            
+        elif avg_quality < self.quality_threshold and not has_critic_results:
+            # Качество низкое и критик еще не запускался - нужен критик
+            state["current_step"] = "needs_critic"
             state["retry_needed"] = []
-            state["average_quality"] = avg_quality
-            state["current_step"] = "ready_for_finalization"  # Специальный маркер
             
             self.graph_logger.log_workflow_step(
-                assessment_id,
-                "quality_check_passed",
-                f"Проверка качества пройдена, средняя оценка: {avg_quality:.1f}"
+                assessment_id, "quality_check_needs_critic",
+                f"✅ УСТАНОВЛЕН current_step = 'needs_critic' (качество {avg_quality:.1f} < {self.quality_threshold})"
+            )
+            
+        else:
+            # Все хорошо - финализация
+            state["retry_needed"] = []
+            state["current_step"] = "ready_for_finalization"
+            
+            self.graph_logger.log_workflow_step(
+                assessment_id, "quality_check_passed",
+                f"✅ УСТАНОВЛЕН current_step = 'ready_for_finalization', средняя оценка: {avg_quality:.1f}"
             )
         
         self.graph_logger.log_workflow_step(
-        assessment_id, "quality_check_end",
-        f"Quality check завершен, установлен current_step: {state.get('current_step')}"
+            assessment_id, "quality_check_end",
+            f"✅ Quality check завершен, ИТОГОВЫЙ current_step: '{state.get('current_step')}'"
         )
+        
         return state
     
     @log_graph_node("retry_evaluation")
@@ -1102,45 +1133,43 @@ class RiskAssessmentWorkflow:
     # ===============================
     
     @log_conditional_edge_func("quality_check_router") 
-    def _quality_check_router(self, state: WorkflowState) -> Literal["retry", "finalize", "error"]:
-        """ИСПРАВЛЕННАЯ маршрутизация после проверки качества"""
+    def _quality_check_router(self, state: WorkflowState) -> Literal["retry", "finalize", "error", "critic"]:
+        """ПРАВИЛЬНАЯ маршрутизация с селективным критиком"""
         assessment_id = state.get("assessment_id", "unknown")
 
         # Получаем актуальную информацию из состояния
         current_step = state.get("current_step", "unknown")
         error_message = state.get("error_message")
         retry_needed = state.get("retry_needed", [])
+        average_quality = state.get("average_quality", 7.0)
         
         self.graph_logger.log_workflow_step(
-        assessment_id, "router_input_analysis",
-        f"Router получил: current_step='{current_step}', error='{error_message}', retry_needed={len(retry_needed)}"
+            assessment_id, 
+            "router_input_analysis",
+            f"Router получил: current_step='{current_step}', error='{error_message}', retry_needed={len(retry_needed)}, avg_quality={average_quality}"
         )
 
         # Проверяем наличие данных
         try:
             evaluation_results = state.get_successful_evaluations()
             self.graph_logger.log_workflow_step(
-                assessment_id, "router_data_check",
+                assessment_id, 
+                "router_data_check",
                 f"Router видит {len(evaluation_results)} успешных оценок"
             )
         except Exception as e:
             self.graph_logger.log_workflow_step(
-                assessment_id, "router_data_error",
+                assessment_id, 
+                "router_data_error",
                 f"Router не может получить данные: {e}"
             )
-        # Логируем состояние для диагностики
-        
-        self.graph_logger.log_workflow_step(
-            assessment_id,
-            "quality_check_router_decision",
-            f"current_step: {current_step}, retry_needed: {len(retry_needed)}, error: {bool(error_message)}"
-        )
         
         # Принимаем решение о маршрутизации
         if error_message or current_step == "error":
             # Есть ошибка - идем в обработку ошибок
             self.graph_logger.log_workflow_step(
-                assessment_id, "router_decision", "Направляем в error_handling"
+                assessment_id, 
+                "router_decision", 
                 f"Решение: ERROR (error_message='{error_message}', current_step='{current_step}')"
             )
             return "error"
@@ -1148,25 +1177,36 @@ class RiskAssessmentWorkflow:
         elif current_step == "retry_needed" and retry_needed:
             # Нужны повторы - идем на повторную оценку
             self.graph_logger.log_workflow_step(
-                assessment_id, "router_decision", f"Направляем на retry для {len(retry_needed)} рисков"
-                 f"Решение: RETRY (retry_needed={retry_needed})"
+                assessment_id, 
+                "router_decision", 
+                f"Решение: RETRY (retry_needed={retry_needed})"
             )
             return "retry"
             
         elif current_step == "ready_for_finalization":
             # Все готово для финализации
             self.graph_logger.log_workflow_step(
-                assessment_id, "router_decision", "Направляем на финализацию"
-                f"Решение: FINALIZE (all good)"
+                assessment_id, 
+                "router_decision", 
+                f"Решение: FINALIZE (all good, quality={average_quality})"
             )
             return "finalize"
             
-        else:
-            # Неожиданное состояние - для безопасности идем на финализацию
+        elif current_step == "needs_critic" or average_quality < self.quality_threshold:
+            # Качество низкое - нужен критик
             self.graph_logger.log_workflow_step(
-                assessment_id, "router_decision", 
-                f"Неожиданное состояние {current_step}, направляем на финализацию"
-                f"Решение: FINALIZE (fallback, неожиданное состояние '{current_step}')"
+                assessment_id, 
+                "router_decision", 
+                f"Решение: CRITIC (низкое качество {average_quality} < {self.quality_threshold})"
+            )
+            return "critic"
+            
+        else:
+            # По умолчанию - финализация
+            self.graph_logger.log_workflow_step(
+                assessment_id, 
+                "router_decision", 
+                f"Решение: FINALIZE (fallback, состояние '{current_step}')"
             )
             return "finalize"
     
