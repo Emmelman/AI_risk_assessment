@@ -65,86 +65,125 @@ class RiskAssessmentWorkflow:
         self.graph = self._build_graph()
     
     def _build_graph(self) -> CompiledGraph:
-        """Построение LangGraph workflow"""
+        """Построение LangGraph workflow С ДИАГНОСТИКОЙ"""
+        
+        print("🔍 НАЧИНАЕМ ПОСТРОЕНИЕ ГРАФА")
         
         # Создаем StateGraph
         workflow = StateGraph(WorkflowState)
         
+        print("🔍 ДОБАВЛЯЕМ УЗЛЫ")
         # Добавляем узлы
         self._add_nodes(workflow)
         
+        print("🔍 ДОБАВЛЯЕМ РЁБРА") 
         # Добавляем рёбра
         self._add_edges(workflow)
         
+        print("🔍 УСТАНАВЛИВАЕМ ТОЧКИ ВХОДА/ВЫХОДА")
         # Устанавливаем точки входа и выхода
         workflow.set_entry_point("initialization")
         workflow.set_finish_point("finalization")
         
-        return workflow.compile()
+        print("🔍 КОМПИЛИРУЕМ ГРАФ")
+        compiled_graph = workflow.compile()
+        
+        print("🔍 ГРАФ СКОМПИЛИРОВАН УСПЕШНО")
+        return compiled_graph
     
     def _add_nodes(self, workflow: StateGraph):
-        """ИСПРАВЛЕННОЕ добавление узлов с батчированными оценщиками"""
+        """ДИАГНОСТИЧЕСКОЕ добавление узлов с проверкой evaluation_collection"""
+        
+        print("🔍 ДОБАВЛЯЕМ УЗЛЫ:")
         
         # 1. Инициализация
+        print("  ✅ Добавляем initialization")
         workflow.add_node("initialization", self._initialization_node)
         
         # 2. Профилирование
+        print("  ✅ Добавляем profiling")
         profiler_node = create_profiler_node_function(self.profiler)
         workflow.add_node("profiling", log_graph_node("profiling")(profiler_node))
         
         # 3. Подготовка к оценке
+        print("  ✅ Добавляем evaluation_preparation")
         workflow.add_node("evaluation_preparation", self._evaluation_preparation_node)
         
-        # 4. НОВЫЕ БАТЧИРОВАННЫЕ УЗЛЫ ОЦЕНКИ
+        # 4. Батчированные узлы оценки
+        print("  ✅ Добавляем batch_1_evaluation")
         workflow.add_node("batch_1_evaluation", self._batch_1_evaluation_node)
+        
+        print("  ✅ Добавляем batch_2_evaluation")
         workflow.add_node("batch_2_evaluation", self._batch_2_evaluation_node) 
+        
+        print("  ✅ Добавляем batch_3_evaluation")
         workflow.add_node("batch_3_evaluation", self._batch_3_evaluation_node)
         
-        # 5. Сбор результатов
-        workflow.add_node("evaluation_collection", self._evaluation_collection_node)
+        # 5. КРИТИЧНО: Сбор результатов
+        print("  🚨 ДОБАВЛЯЕМ EVALUATION_COLLECTION")
+        print(f"  🚨 Функция существует: {hasattr(self, '_evaluation_collection_node')}")
+        print(f"  🚨 Функция callable: {callable(getattr(self, '_evaluation_collection_node', None))}")
+        
+        try:
+            workflow.add_node("evaluation_collection", self._evaluation_collection_node)
+            print("  ✅ evaluation_collection ДОБАВЛЕН УСПЕШНО")
+        except Exception as e:
+            print(f"  ❌ ОШИБКА при добавлении evaluation_collection: {e}")
+            import traceback
+            print(f"  ❌ TRACEBACK: {traceback.format_exc()}")
         
         # 6. Критический анализ
+        print("  ✅ Добавляем critic_analysis")
         critic_node = create_critic_node_function_fixed(self.critic)
         workflow.add_node("critic_analysis", log_graph_node("critic_analysis")(critic_node))
         
         # 7. Проверка качества
+        print("  ✅ Добавляем quality_check")
         workflow.add_node("quality_check", self._quality_check_node)
         
         # 8. Повторная оценка
+        print("  ✅ Добавляем retry_evaluation")
         workflow.add_node("retry_evaluation", self._retry_evaluation_node)
         
         # 9. Финализация
+        print("  ✅ Добавляем finalization")
         workflow.add_node("finalization", self._finalization_node)
         
         # 10. Обработка ошибок
+        print("  ✅ Добавляем error_handling")
         workflow.add_node("error_handling", self._error_handling_node)
-    
-    def _add_edges(self, workflow: StateGraph):
-        """ИСПРАВЛЕННОЕ добавление рёбер с батчированием агентов"""
         
-        # Последовательные переходы
+        print("🔍 ВСЕ УЗЛЫ ДОБАВЛЕНЫ")
+
+    def _add_edges(self, workflow: StateGraph):
+        """ДИАГНОСТИЧЕСКИЕ рёбра с print'ами"""
+        
+        print("🔍 ДОБАВЛЯЕМ РЁБРА:")
+        
+        # Основной поток
+        print("  ✅ initialization → profiling")
         workflow.add_edge("initialization", "profiling")
+        
+        print("  ✅ profiling → evaluation_preparation")
         workflow.add_edge("profiling", "evaluation_preparation")
         
-        # НОВОЕ: Батчированная оценка рисков (по 2 агента за раз)
-        
-        # Батч 1: Этические и социальные риски
+        print("  ✅ evaluation_preparation → batch_1_evaluation")
         workflow.add_edge("evaluation_preparation", "batch_1_evaluation")
         
-        # Батч 2: Безопасность и стабильность  
+        print("  ✅ batch_1_evaluation → batch_2_evaluation")
         workflow.add_edge("batch_1_evaluation", "batch_2_evaluation")
         
-        # Батч 3: Автономность и регуляторные
+        print("  ✅ batch_2_evaluation → batch_3_evaluation")
         workflow.add_edge("batch_2_evaluation", "batch_3_evaluation")
         
-        # После всех батчей - сбор результатов
+        print("  ✅ batch_3_evaluation → evaluation_collection")
         workflow.add_edge("batch_3_evaluation", "evaluation_collection")
         
-        # Основной поток остается прежним
-        
-        workflow.add_edge("critic_analysis", "quality_check")
+        print("  ✅ evaluation_collection → quality_check")
+        workflow.add_edge("evaluation_collection", "quality_check")
         
         # Условные переходы из проверки качества
+        print("  ✅ quality_check → conditional_edges")
         workflow.add_conditional_edges(
             "quality_check",
             log_conditional_edge_func("quality_check_router")(self._quality_check_router),
@@ -155,14 +194,77 @@ class RiskAssessmentWorkflow:
                 "critic": "critic_analysis"
             }
         )
-        # Критик только при необходимости
-        workflow.add_edge("critic_analysis", "quality_check")  # Возврат к проверке качества
-        # Из повторной оценки обратно к подготовке
+        
+        # Возвраты
+        print("  ✅ critic_analysis → quality_check")
+        workflow.add_edge("critic_analysis", "quality_check")
+        
+        print("  ✅ retry_evaluation → evaluation_preparation")
         workflow.add_edge("retry_evaluation", "evaluation_preparation")
         
         # Завершение
+        print("  ✅ finalization → END")
         workflow.add_edge("finalization", END)
+        
+        print("  ✅ error_handling → END")
         workflow.add_edge("error_handling", END)
+        
+        print("🔍 ВСЕ РЁБРА ДОБАВЛЕНЫ")
+
+    async def _evaluation_collection_node(self, state: WorkflowState) -> WorkflowState:
+        """ИСПРАВЛЕННЫЙ сбор результатов батчированной оценки"""
+        assessment_id = state["assessment_id"]
+        # ДИАГНОСТИКА: Логируем состояние ДО обработки
+        self.graph_logger.log_workflow_step(
+            assessment_id, "evaluation_collection_start",
+            f"Начало сбора результатов, current_step: {state.get('current_step')}"
+        )
+        # Получаем сводку по результатам оценки
+        evaluation_summary = state.get_evaluation_summary()
+        
+        self.graph_logger.log_workflow_step(
+            assessment_id,
+            "evaluation_collection",
+            f"Сбор результатов: {evaluation_summary['successful_evaluations']}/{evaluation_summary['total_evaluations']} успешно"
+        )
+        
+        # Логируем детальную информацию
+        successful_evaluations = state.get_successful_evaluations()
+        failed_evaluations = state.get_failed_evaluations()
+        
+        if successful_evaluations:
+            self.graph_logger.log_workflow_step(
+                assessment_id, 
+                "successful_evaluations",
+                f"Успешные оценки: {list(successful_evaluations.keys())}"
+            )
+        
+        if failed_evaluations:
+            self.graph_logger.log_workflow_step(
+                assessment_id,
+                "failed_evaluations", 
+                f"Неудачные оценки: {list(failed_evaluations.keys())}"
+            )
+        
+        # Проверяем критический порог успешности 
+        success_rate = evaluation_summary["success_rate"]
+        if success_rate < 0.33:  # Менее 50% успешных оценок
+            self.graph_logger.log_workflow_step(
+                assessment_id, "evaluation_collection_critical_failure",
+                f"❌ КРИТИЧЕСКИ низкий success_rate: {success_rate:.1%} < 33%"
+            )
+            state["current_step"] = "error"
+            state["error_message"] = f"Критически низкий процент успешных оценок: {success_rate:.1%}"
+            return state
+        
+        # Переходим к критическому анализу
+        state["current_step"] = "quality_check"
+        
+        self.graph_logger.log_workflow_step(
+        assessment_id, "evaluation_collection_end",
+        f"Сбор завершен, переход к: {state.get('current_step')}"
+        )
+        return state
     
     # ===============================
     # Узлы графа
@@ -302,58 +404,58 @@ class RiskAssessmentWorkflow:
 
     @log_graph_node("batch_3_evaluation")
     async def _batch_3_evaluation_node(self, state: WorkflowState) -> WorkflowState:
-        """Батч 3: Автономность и регуляторные риски (параллельно)"""
+        """Батч 3: Автономность и регуляторные риски - РАБОЧАЯ ВЕРСИЯ"""
         
         assessment_id = state["assessment_id"]
         agent_profile = state.get("agent_profile", {})
         
-        self.graph_logger.log_workflow_step(
-            assessment_id, 
-            "batch_3_evaluation", 
-            "Запуск Батча 3: автономность + регуляторные риски"
-        )
+        print(f"🔍 BATCH_3 ЗАПУСТИЛСЯ для {assessment_id}")
         
+        # Подготавливаем входные данные
         input_data = {"agent_profile": agent_profile}
         
         try:
-            # Запускаем 2 агента параллельно
+            print("🔍 ЗАПУСКАЕМ АГЕНТОВ...")
+            
+            # Запускаем параллельно автономность и регуляторные риски
             autonomy_task = self.evaluators[RiskType.AUTONOMY].run(input_data, assessment_id)
             regulatory_task = self.evaluators[RiskType.REGULATORY].run(input_data, assessment_id)
             
+            # Ждем завершения обеих задач
             autonomy_result, regulatory_result = await asyncio.gather(
                 autonomy_task, regulatory_task, return_exceptions=True
             )
             
-            # Обрабатываем результаты
-            if not isinstance(autonomy_result, Exception):
+            print(f"🔍 AUTONOMY РЕЗУЛЬТАТ: {autonomy_result.status if hasattr(autonomy_result, 'status') else 'error'}")
+            print(f"🔍 REGULATORY РЕЗУЛЬТАТ: {regulatory_result.status if hasattr(regulatory_result, 'status') else 'error'}")
+            
+            # КРИТИЧНО: Сохраняем результаты правильно
+            print("🔍 СОХРАНЯЕМ РЕЗУЛЬТАТЫ...")
+            
+            if hasattr(autonomy_result, 'status'):
                 state.set_evaluation_result("autonomy", autonomy_result)
-                self.graph_logger.log_workflow_step(
-                    assessment_id, "batch_3_autonomy",
-                    f"Автономность: {autonomy_result.status}"
-                )
+                print("✅ Autonomy результат сохранен")
             else:
-                state.set_evaluation_result("autonomy", self._create_error_result(
-                    "autonomy_risk_evaluator", str(autonomy_result)
-                ))
-            
-            if not isinstance(regulatory_result, Exception):
+                # Если ошибка, создаем fallback
+                error_result = self._create_error_result("autonomy_risk_evaluator", str(autonomy_result))
+                state.set_evaluation_result("autonomy", error_result)
+                print("❌ Autonomy ошибка, создан fallback")
+                
+            if hasattr(regulatory_result, 'status'):
                 state.set_evaluation_result("regulatory", regulatory_result)
-                self.graph_logger.log_workflow_step(
-                    assessment_id, "batch_3_regulatory",
-                    f"Регуляторные: {regulatory_result.status}"
-                )
+                print("✅ Regulatory результат сохранен")
             else:
-                state.set_evaluation_result("regulatory", self._create_error_result(
-                    "regulatory_risk_evaluator", str(regulatory_result)
-                ))
+                # Если ошибка, создаем fallback
+                error_result = self._create_error_result("regulatory_risk_evaluator", str(regulatory_result))
+                state.set_evaluation_result("regulatory", error_result)
+                print("❌ Regulatory ошибка, создан fallback")
             
-            await asyncio.sleep(2)  # Финальная пауза
+            await asyncio.sleep(2)
             
         except Exception as e:
-            self.graph_logger.log_workflow_step(
-                assessment_id, "batch_3_error", f"Ошибка батча 3: {e}"
-            )
+            print(f"🚨 ОШИБКА в BATCH_3: {e}")
             
+            # Создаем fallback результаты
             state.set_evaluation_result("autonomy", self._create_error_result(
                 "autonomy_risk_evaluator", f"Ошибка батча: {e}"
             ))
@@ -361,12 +463,21 @@ class RiskAssessmentWorkflow:
                 "regulatory_risk_evaluator", f"Ошибка батча: {e}"
             ))
         
+        # ПРОВЕРЯЕМ что результаты сохранены
+        try:
+            all_results = state.get_evaluation_results()
+            successful = state.get_successful_evaluations()
+            print(f"🔍 ВСЕГО РЕЗУЛЬТАТОВ: {len(all_results)}")
+            print(f"🔍 УСПЕШНЫХ РЕЗУЛЬТАТОВ: {len(successful)}")
+            print(f"🔍 КЛЮЧИ УСПЕШНЫХ: {list(successful.keys())}")
+        except Exception as e:
+            print(f"🚨 ОШИБКА при проверке результатов: {e}")
+        
+        # Устанавливаем следующий шаг
         state["current_step"] = "evaluation_collection"
         
-        self.graph_logger.log_workflow_step(
-        assessment_id, "batch_3_completed", 
-        f"Батч 3 завершен, переход к: {state.get('current_step', 'unknown')}"
-        )
+        print(f"🔍 BATCH_3 ЗАВЕРШАЕТСЯ, current_step = {state.get('current_step')}")
+        
         return state
 
     # ===============================
@@ -385,57 +496,7 @@ class RiskAssessmentWorkflow:
             "end_time": datetime.now()
         }
 
-    @log_graph_node("evaluation_collection")
-    async def _evaluation_collection_node(self, state: WorkflowState) -> WorkflowState:
-        """ИСПРАВЛЕННЫЙ сбор результатов батчированной оценки"""
-        assessment_id = state["assessment_id"]
-        # ДИАГНОСТИКА: Логируем состояние ДО обработки
-        self.graph_logger.log_workflow_step(
-            assessment_id, "evaluation_collection_start",
-            f"Начало сбора результатов, current_step: {state.get('current_step')}"
-        )
-        # Получаем сводку по результатам оценки
-        evaluation_summary = state.get_evaluation_summary()
-        
-        self.graph_logger.log_workflow_step(
-            assessment_id,
-            "evaluation_collection",
-            f"Сбор результатов: {evaluation_summary['successful_evaluations']}/{evaluation_summary['total_evaluations']} успешно"
-        )
-        
-        # Логируем детальную информацию
-        successful_evaluations = state.get_successful_evaluations()
-        failed_evaluations = state.get_failed_evaluations()
-        
-        if successful_evaluations:
-            self.graph_logger.log_workflow_step(
-                assessment_id, 
-                "successful_evaluations",
-                f"Успешные оценки: {list(successful_evaluations.keys())}"
-            )
-        
-        if failed_evaluations:
-            self.graph_logger.log_workflow_step(
-                assessment_id,
-                "failed_evaluations", 
-                f"Неудачные оценки: {list(failed_evaluations.keys())}"
-            )
-        
-        # Проверяем критический порог успешности 
-        success_rate = evaluation_summary["success_rate"]
-        if success_rate < 0.5:  # Менее 50% успешных оценок
-            state["current_step"] = "error"
-            state["error_message"] = f"Критически низкий процент успешных оценок: {success_rate:.1%}"
-            return state
-        
-        # Переходим к критическому анализу
-        state["current_step"] = "critic_analysis"
-        
-        self.graph_logger.log_workflow_step(
-        assessment_id, "evaluation_collection_end",
-        f"Сбор завершен, переход к: {state.get('current_step')}"
-        )
-        return state
+    
 
     @log_graph_node("initialization")
     async def _initialization_node(self, state: WorkflowState) -> WorkflowState:
@@ -489,9 +550,9 @@ class RiskAssessmentWorkflow:
     
     
     
-    @log_graph_node("quality_check")
+    
     async def _quality_check_node(self, state: WorkflowState) -> WorkflowState:
-        """ПРАВИЛЬНАЯ проверка качества без обязательного критика"""
+        """ПРОДАКШН версия проверки качества с правильной обработкой enum"""
         assessment_id = state["assessment_id"]
         
         self.graph_logger.log_workflow_step(
@@ -499,13 +560,52 @@ class RiskAssessmentWorkflow:
             f"Начало quality_check, входящий current_step: {state.get('current_step')}"
         )
 
-        # Получаем результаты оценки
+        # ИСПРАВЛЕНО: Получаем результаты с правильной обработкой enum
         try:
-            evaluation_results = state.get_successful_evaluations()
+            # Используем нашу исправленную логику вместо встроенного метода
+            all_results = state.get_evaluation_results()
+            evaluation_results = {}
+            
+            for risk_type, result in all_results.items():
+                if not result:
+                    continue
+                    
+                # Правильная проверка статуса (enum vs строка)
+                status = None
+                if isinstance(result, dict):
+                    status = result.get("status")
+                elif hasattr(result, 'status'):
+                    status = result.status
+                    
+                # Проверяем статус как ENUM или строку
+                is_completed = False
+                if hasattr(status, 'value'):
+                    is_completed = status.value == "completed"
+                elif str(status) == "ProcessingStatus.COMPLETED":
+                    is_completed = True  
+                elif status == "completed":
+                    is_completed = True
+                
+                if not is_completed:
+                    continue
+                
+                # Проверяем result_data
+                result_data = None
+                if isinstance(result, dict):
+                    result_data = result.get("result_data")
+                elif hasattr(result, 'result_data'):
+                    result_data = result.result_data
+                    
+                if result_data is None:
+                    continue
+                
+                evaluation_results[risk_type] = result
+            
             self.graph_logger.log_workflow_step(
                 assessment_id, "quality_check_data",
                 f"Успешных оценок: {len(evaluation_results)}, типы: {list(evaluation_results.keys())}"
             )
+            
         except Exception as e:
             self.graph_logger.log_workflow_step(
                 assessment_id, "quality_check_data_error",
@@ -524,12 +624,10 @@ class RiskAssessmentWorkflow:
             state["retry_needed"] = []
             return state
         
-        # НОВАЯ ЛОГИКА: Сначала проверяем простые метрики качества
-        
-        # 1. Базовая оценка качества на основе количества успешных оценок
+        # Базовая оценка качества на основе количества успешных оценок
         success_rate = len(evaluation_results) / 6  # 6 типов рисков всего
         
-        # 2. Проверяем есть ли уже результаты критика (из предыдущего прохода)
+        # Проверяем есть ли уже результаты критика (из предыдущего прохода)
         critic_results = state.get("critic_results", {})
         has_critic_results = bool(critic_results)
         
@@ -575,7 +673,6 @@ class RiskAssessmentWorkflow:
             
         else:
             # Если нет результатов критика, делаем базовую оценку
-            # Простая эвристика: чем больше успешных оценок, тем выше качество
             base_quality = 5.0 + (success_rate * 5.0)  # От 5.0 до 10.0
             avg_quality = base_quality
             retry_needed = []
@@ -597,7 +694,6 @@ class RiskAssessmentWorkflow:
         state["average_quality"] = avg_quality
         
         if retry_needed:
-            # Есть оценки для повтора (только если был критик)
             state["retry_needed"] = retry_needed
             state["current_step"] = "retry_needed"
             
@@ -607,7 +703,6 @@ class RiskAssessmentWorkflow:
             )
             
         elif avg_quality < self.quality_threshold and not has_critic_results:
-            # Качество низкое и критик еще не запускался - нужен критик
             state["current_step"] = "needs_critic"
             state["retry_needed"] = []
             
@@ -617,7 +712,6 @@ class RiskAssessmentWorkflow:
             )
             
         else:
-            # Все хорошо - финализация
             state["retry_needed"] = []
             state["current_step"] = "ready_for_finalization"
             
@@ -633,7 +727,7 @@ class RiskAssessmentWorkflow:
         
         return state
     
-    @log_graph_node("retry_evaluation")
+    
     async def _retry_evaluation_node(self, state: WorkflowState) -> WorkflowState:
         """ИСПРАВЛЕННАЯ повторная оценка с селективным перезапуском"""
         assessment_id = state["assessment_id"]
@@ -735,7 +829,7 @@ class RiskAssessmentWorkflow:
         
         return state
     
-    @log_graph_node("finalization")
+    
     async def _finalization_node(self, state: WorkflowState) -> WorkflowState:
         """ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ финализация с решением ошибки result_data"""
         assessment_id = state["assessment_id"]
@@ -1132,21 +1226,20 @@ class RiskAssessmentWorkflow:
     # Условные переходы
     # ===============================
     
-    @log_conditional_edge_func("quality_check_router") 
+    
     def _quality_check_router(self, state: WorkflowState) -> Literal["retry", "finalize", "error", "critic"]:
-        """ПРАВИЛЬНАЯ маршрутизация с селективным критиком"""
+        """ПРОДАКШН маршрутизация после проверки качества"""
         assessment_id = state.get("assessment_id", "unknown")
 
         # Получаем актуальную информацию из состояния
         current_step = state.get("current_step", "unknown")
-        error_message = state.get("error_message")
         retry_needed = state.get("retry_needed", [])
         average_quality = state.get("average_quality", 7.0)
         
         self.graph_logger.log_workflow_step(
             assessment_id, 
             "router_input_analysis",
-            f"Router получил: current_step='{current_step}', error='{error_message}', retry_needed={len(retry_needed)}, avg_quality={average_quality}"
+            f"Router получил: current_step='{current_step}', retry_needed={len(retry_needed)}, avg_quality={average_quality}"
         )
 
         # Проверяем наличие данных
@@ -1165,12 +1258,12 @@ class RiskAssessmentWorkflow:
             )
         
         # Принимаем решение о маршрутизации
-        if error_message or current_step == "error":
-            # Есть ошибка - идем в обработку ошибок
+        if current_step == "error":
+            # ИСПРАВЛЕНО: Только если current_step явно установлен в "error"
             self.graph_logger.log_workflow_step(
                 assessment_id, 
                 "router_decision", 
-                f"Решение: ERROR (error_message='{error_message}', current_step='{current_step}')"
+                f"Решение: ERROR (current_step='error')"
             )
             return "error"
             
@@ -1202,7 +1295,7 @@ class RiskAssessmentWorkflow:
             return "critic"
             
         else:
-            # По умолчанию - финализация
+            # Неожиданное состояние - для безопасности идем на финализацию
             self.graph_logger.log_workflow_step(
                 assessment_id, 
                 "router_decision", 

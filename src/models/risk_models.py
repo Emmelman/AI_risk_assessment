@@ -538,16 +538,48 @@ class WorkflowState(BaseModel):
                 "error_message": f"Неподдерживаемый тип результата: {type(result)}"
             }
     def get_successful_evaluations(self) -> Dict[str, Any]:
-        """Возвращает только успешно завершенные оценки"""
+        """ИСПРАВЛЕННЫЙ метод - правильно обрабатывает enum статусы"""
         
         all_results = self.get_evaluation_results()
         successful_results = {}
         
         for risk_type, result in all_results.items():
-            if (result and 
-                result.get("status") in ["completed", "success"] and 
-                result.get("result_data") is not None):
-                successful_results[risk_type] = result
+            if not result:
+                continue
+                
+            # ИСПРАВЛЕНО: Правильная проверка статуса (enum vs строка)
+            status = None
+            if isinstance(result, dict):
+                status = result.get("status")
+            elif hasattr(result, 'status'):
+                status = result.status
+                
+            # Проверяем статус как ENUM или строку
+            is_completed = False
+            if hasattr(status, 'value'):
+                # Это enum - проверяем value
+                is_completed = status.value == "completed"
+            elif str(status) == "ProcessingStatus.COMPLETED":
+                # Это enum в строковом представлении
+                is_completed = True  
+            elif status == "completed":
+                # Это строка
+                is_completed = True
+            
+            if not is_completed:
+                continue
+            
+            # Проверяем result_data
+            result_data = None
+            if isinstance(result, dict):
+                result_data = result.get("result_data")
+            elif hasattr(result, 'result_data'):
+                result_data = result.result_data
+                
+            if result_data is None:
+                continue
+            
+            successful_results[risk_type] = result
     
         return successful_results
 
