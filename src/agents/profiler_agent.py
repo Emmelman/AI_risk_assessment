@@ -509,7 +509,64 @@ class ProfilerAgent(AnalysisAgent):
     def _get_required_result_fields(self) -> List[str]:
         """Обязательные поля результата профайлера"""
         return ["agent_profile", "collected_data_summary"]
-
+   
+    async def run(self, input_data: Dict[str, Any], assessment_id: str) -> AgentTaskResult:
+        """
+        Выполнение профилирования агента - ИСПРАВЛЕННАЯ ВЕРСИЯ
+        """
+        start_time = datetime.now()
+        
+        try:
+            with LogContext("profile_agent", assessment_id, self.name):
+                # Извлекаем входные данные
+                source_files = input_data.get("source_files", [])
+                preliminary_name = input_data.get("agent_name", "Unknown_Agent")
+                
+                if not source_files:
+                    raise ValueError("Не предоставлены файлы для анализа")
+                
+                # Собираем данные из всех источников
+                collected_data = await self._collect_all_data(source_files, assessment_id)
+                
+                # Анализируем собранные данные с помощью LLM
+                agent_profile = await self._analyze_and_create_profile(
+                    collected_data, preliminary_name, assessment_id
+                )
+                
+                # Создаем результат БЕЗ RiskEvaluation
+                end_time = datetime.now()
+                execution_time = (end_time - start_time).total_seconds()
+                
+                return AgentTaskResult(
+                    agent_name=self.name,
+                    task_type="profiling",
+                    status=ProcessingStatus.COMPLETED,
+                    result_data={
+                        "agent_profile": agent_profile.dict(),
+                        "collected_data_summary": self._create_data_summary(collected_data)
+                    },
+                    start_time=start_time,
+                    end_time=end_time,
+                    execution_time_seconds=execution_time
+                )
+                
+        except Exception as e:
+            self.logger.bind_context(assessment_id, self.name).error(
+                f"❌ Ошибка профилирования: {e}"
+            )
+            
+            end_time = datetime.now()
+            execution_time = (end_time - start_time).total_seconds()
+            
+            return AgentTaskResult(
+                agent_name=self.name,
+                task_type="profiling",
+                status=ProcessingStatus.FAILED,
+                error_message=str(e),
+                start_time=start_time,
+                end_time=end_time,
+                execution_time_seconds=execution_time
+            )
 
 # ===============================
 # Интеграция с LangGraph

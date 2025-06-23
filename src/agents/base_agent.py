@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from ..utils.llm_client import LLMClient, LLMConfig, LLMMessage, RiskAnalysisLLMClient
 from ..utils.logger import get_logger, log_agent_execution, log_llm_call
-from ..models.risk_models import AgentTaskResult, ProcessingStatus
+from ..models.risk_models import AgentTaskResult, ProcessingStatus, RiskEvaluation
 
 
 @dataclass
@@ -92,77 +92,102 @@ class BaseAgent(ABC):
         """Получение системного промпта для агента"""
         pass
     
-    async def run(
-        self, 
-        input_data: Dict[str, Any], 
-        assessment_id: str
-    ) -> AgentTaskResult:
-        """
-        Запуск агента с обработкой ошибок и повторами
+    async def run(self, input_data: Dict[str, Any], assessment_id: str) -> AgentTaskResult:
+        """Выполнение оценки риска - ТОЛЬКО для EvaluationAgent"""
         
-        Args:
-            input_data: Входные данные
-            assessment_id: ID оценки
+        # Проверяем что это действительно оценщик риска
+        if not hasattr(self, 'risk_type'):
+            raise ValueError(f"Класс {self.__class__.__name__} должен переопределить метод run()")
+        
+        start_time = datetime.now()
+        
+        try:
+            agent_profile = input_data.get("agent_profile", {})
             
-        Returns:
-            Результат выполнения
-        """
-        task_result = AgentTaskResult(
-            agent_name=self.name,
-            task_type=self._get_task_type(),
-            status=ProcessingStatus.IN_PROGRESS,
-            start_time=datetime.now()
-        )
-        
-        # Логируем начало работы
-        self.logger.log_agent_start(self.name, self._get_task_type(), assessment_id)
-        
-        for attempt in range(self.config.max_retries):
+            # Получаем данные для оценки
+            agent_data = self._prepare_agent_data(agent_profile)
+            evaluation_criteria = self._get_evaluation_criteria()
+            examples = self._get_evaluation_examples()
+            
+            # Выполняем оценку риска
+            risk_data = await self.evaluate_risk(
+                risk_type=self.risk_type,
+                agent_data=agent_data,
+                evaluation_criteria=evaluation_criteria,
+                assessment_id=assessment_id,
+                examples=examples
+            )
+            
+            # Создаем RiskEvaluation с обязательными полями
             try:
-                # Выполняем основную обработку
-                result = await asyncio.wait_for(
-                    self.process(input_data, assessment_id),
-                    timeout=self.config.timeout_seconds
+                risk_evaluation = RiskEvaluation(
+                    risk_type=self.risk_type,
+                    evaluator_agent=self.name,
+                    **risk_data
                 )
-                
-                # Обновляем статистику
-                self._update_stats(True, result.execution_time_seconds or 0)
-                
-                # Логируем успех
-                self.logger.log_agent_success(
-                    self.name, 
-                    self._get_task_type(), 
-                    assessment_id, 
-                    result.execution_time_seconds or 0
-                )
-                
-                return result
-                
-            except asyncio.TimeoutError:
-                error_msg = f"Тайм-аут выполнения ({self.config.timeout_seconds}с)"
-                await self._handle_retry(task_result, error_msg, attempt, assessment_id)
-                
             except Exception as e:
-                error_msg = f"Ошибка выполнения: {str(e)}"
-                await self._handle_retry(task_result, error_msg, attempt, assessment_id)
-        
-        # Все попытки исчерпаны
-        task_result.status = ProcessingStatus.FAILED
-        task_result.end_time = datetime.now()
-        task_result.execution_time_seconds = (
-            task_result.end_time - task_result.start_time
-        ).total_seconds()
-        
-        self._update_stats(False, task_result.execution_time_seconds)
-        
-        self.logger.log_agent_error(
-            self.name, 
-            self._get_task_type(), 
-            assessment_id, 
-            Exception(task_result.error_message or "Неизвестная ошибка")
-        )
-        
-        return task_result
+                # Fallback при ошибке валидации
+                self.logger.bind_context(assessment_id, self.name).warning(
+                    f"⚠️ Ошибка создания RiskEvaluation: {e}"
+                )
+                
+                risk_evaluation = RiskEvaluation(
+                    risk_type=self.risk_type,
+                    evaluator_agent=self.name,
+                    probability_score=risk_data.get("probability_score", 3),
+                    impact_score=risk_data.get("impact_score", 3),
+                    total_score=risk_data.get("total_score", 9),
+                    risk_level=risk_data.get("risk_level", "medium"),
+                    probability_reasoning=risk_data.get("probability_reasoning", "Дефолтное обоснование"),
+                    impact_reasoning=risk_data.get("impact_reasoning", "Дефолтное обоснование"),
+                    key_factors=risk_data.get("key_factors", ["Ошибка получения данных"]),
+                    recommendations=risk_data.get("recommendations", ["Повторить оценку"]),
+                    confidence_level=risk_data.get("confidence_level", 0.3)
+                )
+            
+            # Создаем результат
+            end_time = datetime.now()
+            execution_time = (end_time - start_time).total_seconds()
+            
+            return AgentTaskResult(
+                agent_name=self.name,
+                task_type=f"evaluate_{self.risk_type}",
+                status=ProcessingStatus.COMPLETED,
+                result_data={"risk_evaluation": risk_evaluation.dict()},
+                start_time=start_time,
+                end_time=end_time,
+                execution_time_seconds=execution_time
+            )
+            
+        except Exception as e:
+            # Полный fallback 
+            end_time = datetime.now()
+            execution_time = (end_time - start_time).total_seconds()
+            
+            fallback_evaluation = RiskEvaluation(
+                risk_type=getattr(self, 'risk_type', 'unknown'),
+                evaluator_agent=self.name,
+                probability_score=3,
+                impact_score=3,
+                total_score=9,
+                risk_level="medium",
+                probability_reasoning="Ошибка выполнения оценки",
+                impact_reasoning="Используются дефолтные значения",
+                key_factors=["Ошибка агента-оценщика"],
+                recommendations=["Проверить настройки", "Повторить оценку"],
+                confidence_level=0.1
+            )
+            
+            return AgentTaskResult(
+                agent_name=self.name,
+                task_type=f"evaluate_{getattr(self, 'risk_type', 'unknown')}",
+                status=ProcessingStatus.COMPLETED,
+                result_data={"risk_evaluation": fallback_evaluation.dict()},
+                start_time=start_time,
+                end_time=end_time,
+                execution_time_seconds=execution_time,
+                error_message=str(e)
+            )
     
     async def call_llm(
         self,

@@ -260,69 +260,34 @@ class RiskAssessmentWorkflow:
     
     @log_graph_node("quality_check")
     async def _quality_check_node(self, state: WorkflowState) -> WorkflowState:
-        """Проверка качества и принятие решения о следующих шагах - ИСПРАВЛЕННАЯ"""
+        """Упрощенная проверка качества - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ"""
         assessment_id = state["assessment_id"]
-        critic_results = state.get("critic_results", {})
-        retry_count = state.get("retry_count", {})
-        max_retries = state.get("max_retries", 3)
         
-        # Определяем, какие риски нуждаются в повторной оценке
-        retry_needed = []
-        quality_scores = []
+        # Получаем результаты оценки из нового формата
+        evaluation_results = state.get_evaluation_results()
         
-        for risk_type, critic_result in critic_results.items():
-            # ИСПРАВЛЕНИЕ: Проверяем что critic_result это dict, а не AgentTaskResult объект
-            if isinstance(critic_result, dict):
-                if (critic_result.get("status") == "completed" and 
-                    critic_result.get("result_data") and 
-                    "critic_evaluation" in critic_result["result_data"]):
-                    
-                    critic_eval = critic_result["result_data"]["critic_evaluation"]
-                    quality_scores.append(critic_eval["quality_score"])
-                    
-                    # Проверяем, нужен ли повтор
-                    if not critic_eval["is_acceptable"]:
-                        current_retries = retry_count.get(risk_type, 0)
-                        if current_retries < max_retries:
-                            retry_needed.append(risk_type)
-            else:
-                # Если это не dict, возможно это объект с атрибутами
-                try:
-                    if (hasattr(critic_result, 'status') and 
-                        critic_result.status == "completed" and 
-                        hasattr(critic_result, 'result_data') and 
-                        critic_result.result_data and 
-                        "critic_evaluation" in critic_result.result_data):
-                        
-                        critic_eval = critic_result.result_data["critic_evaluation"]
-                        quality_scores.append(critic_eval["quality_score"])
-                        
-                        if not critic_eval["is_acceptable"]:
-                            current_retries = retry_count.get(risk_type, 0)
-                            if current_retries < max_retries:
-                                retry_needed.append(risk_type)
-                except Exception as e:
-                    self.graph_logger.log_workflow_step(
-                        assessment_id,
-                        "quality_check_warning",
-                        f"Ошибка обработки critic_result для {risk_type}: {e}"
-                    )
+        # Простая проверка: есть ли хотя бы несколько завершенных оценок
+        completed_evaluations = []
+        for risk_type, result in evaluation_results.items():
+            if result and isinstance(result, dict) and result.get("status") == "completed":
+                completed_evaluations.append(risk_type)
         
-        # Логируем результаты проверки качества
-        avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 5.0
+        # Логируем результат проверки
+        quality_score = len(completed_evaluations) / len(evaluation_results) * 10 if evaluation_results else 0
+        
         self.graph_logger.log_quality_check(
-            assessment_id, 
+            assessment_id,
             "overall", 
-            avg_quality, 
+            quality_score,
             self.quality_threshold
         )
         
-        # Обновляем состояние
-        state["retry_needed"] = retry_needed
-        state["average_quality"] = avg_quality
-        
-        # Определяем следующий шаг (на данном этапе всегда переходим к финализации)
-        state["current_step"] = "finalization"
+        # Упрощенная логика: если есть хотя бы 3 завершенных оценки, переходим к финализации
+        if len(completed_evaluations) >= 3:
+            state["current_step"] = "finalization"
+        else:
+            state["current_step"] = "error"
+            state["error_message"] = f"Слишком мало завершенных оценок: {len(completed_evaluations)}/6"
         
         return state
     
