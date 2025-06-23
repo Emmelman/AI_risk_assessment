@@ -609,7 +609,51 @@ class JavaScriptCodeAnalyzer(BaseCodeAnalyzer):
         comments.extend(multi_line_comments)
         
         return comments
-
+    
+    def _calculate_js_complexity(self, content: str) -> float:
+        """Расчет сложности JavaScript кода"""
+        # Базовая сложность
+        base_complexity = self._calculate_complexity_score(content, "javascript")
+        
+        # Специфичные для JS паттерны
+        js_complexity_patterns = [
+            r'\bif\s*\(',
+            r'\bwhile\s*\(',
+            r'\bfor\s*\(',
+            r'\btry\s*{',
+            r'\bcatch\s*\(',
+            r'\.then\s*\(',
+            r'\.catch\s*\(',
+            r'\basync\s+',
+            r'\bawait\s+'
+        ]
+        
+        complexity_count = sum(
+            len(re.findall(pattern, content, re.IGNORECASE))
+            for pattern in js_complexity_patterns
+        )
+        
+        return min(base_complexity + complexity_count * 0.5, 10.0)
+    
+    def _find_js_security_issues(self, content: str) -> List[str]:
+        """Поиск проблем безопасности в JavaScript"""
+        issues = self._find_security_issues(content, "javascript")
+        
+        # JS-специфичные проблемы
+        js_security_patterns = {
+            'eval_usage': r'\beval\s*\(',
+            'innerhtml_usage': r'\.innerHTML\s*=',
+            'document_write': r'document\.write\s*\(',
+            'unsafe_json': r'JSON\.parse\s*\([^)]*\+',
+            'prototype_pollution': r'\.prototype\s*\[',
+            'xss_risk': r'\.append\s*\([^)]*\+',
+        }
+        
+        for issue_type, pattern in js_security_patterns.items():
+            if re.search(pattern, content, re.IGNORECASE):
+                issues.append(f"{issue_type}: найден подозрительный паттерн")
+        
+        return issues
 
 class JavaCodeAnalyzer(BaseCodeAnalyzer):
     """Анализатор Java кода"""
@@ -794,3 +838,480 @@ class JavaCodeAnalyzer(BaseCodeAnalyzer):
         comments.extend(javadoc_comments)
         
         return comments
+    # Добавить в конец файла src/tools/code_analyzer.py перед __all__
+
+        
+    def _calculate_java_complexity(self, content: str) -> float:
+        """Расчет сложности Java кода"""
+        base_complexity = self._calculate_complexity_score(content, "java")
+        
+        java_complexity_patterns = [
+            r'\bif\s*\(',
+            r'\bwhile\s*\(',
+            r'\bfor\s*\(',
+            r'\btry\s*{',
+            r'\bcatch\s*\(',
+            r'\bswitch\s*\(',
+            r'\bcase\s+',
+            r'\?\s*.*\s*:'  # тернарный оператор
+        ]
+        
+        complexity_count = sum(
+            len(re.findall(pattern, content, re.IGNORECASE))
+            for pattern in java_complexity_patterns
+        )
+        
+        return min(base_complexity + complexity_count * 0.5, 10.0)
+    
+    def _find_java_security_issues(self, content: str) -> List[str]:
+        """Поиск проблем безопасности в Java"""
+        issues = self._find_security_issues(content, "java")
+        
+        java_security_patterns = {
+            'sql_injection': r'Statement\.execute\s*\([^)]*\+',
+            'path_traversal': r'new\s+File\s*\([^)]*\+',
+            'reflection_usage': r'Class\.forName\s*\(',
+            'serialization': r'ObjectInputStream\s*\(',
+            'random_weak': r'new\s+Random\s*\(',
+            'hardcoded_crypto': r'AES|DES|MD5|SHA1'
+        }
+        
+        for issue_type, pattern in java_security_patterns.items():
+            if re.search(pattern, content, re.IGNORECASE):
+                issues.append(f"{issue_type}: найден подозрительный паттерн")
+        
+        return issues
+    
+    def _create_empty_code_file(self, path: Path, language: str) -> CodeFile:
+        """Создание пустого объекта CodeFile для ошибок"""
+        return CodeFile(
+            path=str(path),
+            language=language,
+            size_lines=0,
+            size_bytes=0,
+            imports=[],
+            functions=[],
+            classes=[],
+            variables=[],
+            comments=[],
+            complexity_score=0.0,
+            security_issues=["Ошибка чтения файла"]
+        )
+
+
+class ConfigurationAnalyzer:
+    """Анализатор конфигурационных файлов"""
+    
+    def __init__(self):
+        self.logger = get_logger()
+        self.supported_extensions = ['.json', '.yaml', '.yml', '.toml', '.ini', '.env']
+    
+    def can_analyze(self, file_path: Union[str, Path]) -> bool:
+        """Проверка, может ли анализатор обработать файл"""
+        path = Path(file_path)
+        return path.suffix.lower() in self.supported_extensions
+    
+    def analyze_config_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
+        """Анализ конфигурационного файла"""
+        path = Path(file_path)
+        
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            config_info = {
+                "file_path": str(path),
+                "file_type": path.suffix.lower(),
+                "size": len(content),
+                "settings": self._extract_settings(content, path.suffix.lower()),
+                "security_issues": self._find_config_security_issues(content)
+            }
+            
+            return config_info
+            
+        except Exception as e:
+            return {
+                "file_path": str(path),
+                "file_type": path.suffix.lower(),
+                "error": str(e)
+            }
+    
+    def _extract_settings(self, content: str, file_type: str) -> Dict[str, Any]:
+        """Извлечение настроек из конфигурации"""
+        settings = {}
+        
+        if file_type == '.json':
+            try:
+                import json
+                settings = json.loads(content)
+            except json.JSONDecodeError:
+                pass
+        elif file_type in ['.yaml', '.yml']:
+            # Простой парсинг YAML без библиотеки
+            lines = content.split('\n')
+            for line in lines:
+                if ':' in line and not line.strip().startswith('#'):
+                    key, value = line.split(':', 1)
+                    settings[key.strip()] = value.strip()
+        elif file_type == '.env':
+            lines = content.split('\n')
+            for line in lines:
+                if '=' in line and not line.strip().startswith('#'):
+                    key, value = line.split('=', 1)
+                    settings[key.strip()] = value.strip()
+        
+        return settings
+    
+    def _find_config_security_issues(self, content: str) -> List[str]:
+        """Поиск проблем безопасности в конфигурации"""
+        issues = []
+        
+        # Поиск секретов в конфигурации
+        secret_patterns = [
+            r'password\s*[:=]\s*["\']?[^"\'\\n]+["\']?',
+            r'secret\s*[:=]\s*["\']?[^"\'\\n]+["\']?',
+            r'api_key\s*[:=]\s*["\']?[^"\'\\n]+["\']?',
+            r'token\s*[:=]\s*["\']?[^"\'\\n]+["\']?'
+        ]
+        
+        for pattern in secret_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                issues.append("hardcoded_secrets: найдены потенциальные секреты")
+                break
+        
+        # Проверка небезопасных настроек
+        if re.search(r'debug\s*[:=]\s*true', content, re.IGNORECASE):
+            issues.append("debug_mode: включен режим отладки")
+        
+        if re.search(r'ssl\s*[:=]\s*false', content, re.IGNORECASE):
+            issues.append("ssl_disabled: отключен SSL")
+        
+        return issues
+
+
+class CodeAnalyzer:
+    """Главный класс для анализа кодовой базы проекта"""
+    
+    def __init__(self):
+        self.code_analyzers = [
+            PythonCodeAnalyzer(),
+            JavaScriptCodeAnalyzer(),
+            JavaCodeAnalyzer()
+        ]
+        self.config_analyzer = ConfigurationAnalyzer()
+        self.logger = get_logger()
+    
+    def analyze_project(
+        self, 
+        project_path: Union[str, Path], 
+        max_files: int = 100,
+        exclude_dirs: Optional[List[str]] = None
+    ) -> CodeAnalysisResult:
+        """Анализ всего проекта"""
+        start_time = datetime.now()
+        project_path = Path(project_path)
+        
+        if exclude_dirs is None:
+            exclude_dirs = ['node_modules', '.git', '__pycache__', '.venv', 'venv', 'target', '.idea']
+        
+        try:
+            with LogContext("analyze_project", "code_analyzer", "code_analyzer"):
+                # Сканируем файлы
+                all_files = []
+                for file_path in project_path.rglob('*'):
+                    if file_path.is_file() and not any(exclude_dir in str(file_path) for exclude_dir in exclude_dirs):
+                        all_files.append(file_path)
+                
+                # Ограничиваем количество файлов
+                if len(all_files) > max_files:
+                    all_files = all_files[:max_files]
+                
+                # Анализируем файлы
+                analyzed_files = []
+                total_lines = 0
+                languages = {}
+                dependencies = {}
+                entry_points = []
+                config_files = []
+                
+                for file_path in all_files:
+                    # Код файлы
+                    for analyzer in self.code_analyzers:
+                        if analyzer.can_analyze(file_path):
+                            code_file = analyzer.analyze_file(file_path)
+                            analyzed_files.append(code_file)
+                            total_lines += code_file.size_lines
+                            
+                            # Статистика языков
+                            if code_file.language not in languages:
+                                languages[code_file.language] = 0
+                            languages[code_file.language] += 1
+                            
+                            # Зависимости
+                            if code_file.imports:
+                                dependencies[str(file_path)] = code_file.imports
+                            
+                            # Точки входа
+                            if self._is_entry_point(code_file):
+                                entry_points.append(str(file_path))
+                            
+                            break
+                    
+                    # Конфигурационные файлы
+                    if self.config_analyzer.can_analyze(file_path):
+                        config_files.append(str(file_path))
+                
+                # Анализируем безопасность и сложность
+                security_summary = self._analyze_security_summary(analyzed_files)
+                complexity_summary = self._analyze_complexity_summary(analyzed_files)
+                
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                return CodeAnalysisResult(
+                    project_path=str(project_path),
+                    total_files=len(analyzed_files),
+                    total_lines=total_lines,
+                    languages=languages,
+                    files=analyzed_files,
+                    dependencies=dependencies,
+                    entry_points=entry_points,
+                    configuration_files=config_files,
+                    security_summary=security_summary,
+                    complexity_summary=complexity_summary,
+                    analysis_time=execution_time,
+                    success=True
+                )
+                
+        except Exception as e:
+            execution_time = (datetime.now() - start_time).total_seconds()
+            
+            return CodeAnalysisResult(
+                project_path=str(project_path),
+                total_files=0,
+                total_lines=0,
+                languages={},
+                files=[],
+                dependencies={},
+                entry_points=[],
+                configuration_files=[],
+                security_summary={},
+                complexity_summary={},
+                analysis_time=execution_time,
+                success=False,
+                error_message=str(e)
+            )
+    
+    def _is_entry_point(self, code_file: CodeFile) -> bool:
+        """Определение, является ли файл точкой входа"""
+        file_path = Path(code_file.path)
+        
+        # Общие точки входа
+        entry_point_names = ['main.py', 'app.py', 'index.js', 'main.js', 'Main.java']
+        if file_path.name in entry_point_names:
+            return True
+        
+        # Наличие main функции
+        for func in code_file.functions:
+            if func.get('name') == 'main' or func.get('name') == '__main__':
+                return True
+        
+        return False
+    
+    def _analyze_security_summary(self, files: List[CodeFile]) -> Dict[str, Any]:
+        """Анализ общей безопасности проекта"""
+        all_issues = []
+        for file in files:
+            all_issues.extend(file.security_issues)
+        
+        # Группируем по типам
+        issue_types = {}
+        for issue in all_issues:
+            issue_type = issue.split(':')[0] if ':' in issue else 'unknown'
+            if issue_type not in issue_types:
+                issue_types[issue_type] = 0
+            issue_types[issue_type] += 1
+        
+        return {
+            "total_issues": len(all_issues),
+            "issue_types": issue_types,
+            "high_risk_files": [f.path for f in files if len(f.security_issues) > 3],
+            "security_score": max(0, 10 - len(all_issues))  # Чем меньше проблем, тем выше балл
+        }
+    
+    def _analyze_complexity_summary(self, files: List[CodeFile]) -> Dict[str, Any]:
+        """Анализ общей сложности проекта"""
+        if not files:
+            return {"average_complexity": 0, "max_complexity": 0, "complex_files": []}
+        
+        complexities = [f.complexity_score for f in files]
+        average_complexity = sum(complexities) / len(complexities)
+        max_complexity = max(complexities)
+        
+        # Файлы с высокой сложностью
+        complex_files = [f.path for f in files if f.complexity_score > 7]
+        
+        return {
+            "average_complexity": average_complexity,
+            "max_complexity": max_complexity,
+            "complex_files": complex_files,
+            "total_functions": sum(len(f.functions) for f in files),
+            "total_classes": sum(len(f.classes) for f in files)
+        }
+
+
+def _analyze_tech_stack(dependencies: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    """Анализ технологического стека"""
+    tech_categories = {
+        "ml_frameworks": [],
+        "web_frameworks": [],
+        "databases": [],
+        "api_clients": [],
+        "security": [],
+        "testing": [],
+        "java_frameworks": [],
+        "other": []
+    }
+    
+    # Добавить Java библиотеки в существующие категории
+    ml_libs = {
+        'tensorflow', 'torch', 'pytorch', 'sklearn', 'scikit-learn', 'numpy', 'pandas', 
+        'transformers', 'langchain', 'openai', 'anthropic', 'huggingface', 'keras', 
+        'lightgbm', 'xgboost',
+        # Java ML библиотеки
+        'weka', 'deeplearning4j', 'mallet', 'mahout', 'smile'
+    }
+    
+    web_libs = {
+        'flask', 'django', 'fastapi', 'express', 'react', 'vue', 'angular', 'nodejs', 
+        'koa', 'nest', 'nextjs',
+        # Java web фреймворки
+        'spring', 'hibernate', 'struts', 'wicket', 'vaadin', 'jsf'
+    }
+    
+    # Новая категория Java фреймворков
+    java_frameworks = {
+        'spring', 'springboot', 'hibernate', 'struts', 'jsf', 'wicket', 'vaadin', 
+        'grails', 'play', 'akka', 'vertx'
+    }
+    
+    db_libs = {'sqlite3', 'psycopg2', 'pymongo', 'sqlalchemy', 'mysql', 'postgresql'}
+    api_libs = {'requests', 'httpx', 'aiohttp', 'urllib3', 'axios', 'fetch'}
+    security_libs = {'cryptography', 'bcrypt', 'jwt', 'passlib', 'ssl'}
+    test_libs = {'pytest', 'unittest', 'jest', 'mocha', 'junit'}
+    
+    # Анализируем все зависимости
+    all_deps = []
+    for deps_list in dependencies.values():
+        all_deps.extend(deps_list)
+    
+    for dep in set(all_deps):
+        dep_lower = dep.lower()
+        
+        if any(ml_lib in dep_lower for ml_lib in ml_libs):
+            tech_categories["ml_frameworks"].append(dep)
+        elif any(web_lib in dep_lower for web_lib in web_libs):
+            tech_categories["web_frameworks"].append(dep)
+        elif any(java_fw in dep_lower for java_fw in java_frameworks):
+            tech_categories["java_frameworks"].append(dep)
+        elif any(db_lib in dep_lower for db_lib in db_libs):
+            tech_categories["databases"].append(dep)
+        elif any(api_lib in dep_lower for api_lib in api_libs):
+            tech_categories["api_clients"].append(dep)
+        elif any(sec_lib in dep_lower for sec_lib in security_libs):
+            tech_categories["security"].append(dep)
+        elif any(test_lib in dep_lower for test_lib in test_libs):
+            tech_categories["testing"].append(dep)
+        else:
+            tech_categories["other"].append(dep)
+    
+    return tech_categories
+
+
+# ===============================
+# Утилитарные функции
+# ===============================
+
+def create_code_analyzer() -> CodeAnalyzer:
+    """Фабрика для создания анализатора кода"""
+    return CodeAnalyzer()
+
+
+def analyze_agent_codebase(
+    project_path: Union[str, Path], 
+    max_files: int = 100
+) -> CodeAnalysisResult:
+    """
+    Удобная функция для анализа кодовой базы агента
+    
+    Args:
+        project_path: Путь к проекту
+        max_files: Максимальное количество файлов для анализа
+    
+    Returns:
+        Результат анализа кода
+    """
+    analyzer = create_code_analyzer()
+    return analyzer.analyze_project(project_path, max_files)
+
+
+def extract_agent_technical_info(analysis_result: CodeAnalysisResult) -> Dict[str, Any]:
+    """Извлечение технической информации об агенте"""
+    if not analysis_result.success:
+        return {
+            "success": False,
+            "error": analysis_result.error_message,
+            "analysis_time": analysis_result.analysis_time
+        }
+    
+    # Анализируем технологический стек
+    tech_stack = _analyze_tech_stack(analysis_result.dependencies)
+    
+    return {
+        "success": True,
+        "project_path": analysis_result.project_path,
+        "total_files": analysis_result.total_files,
+        "total_lines": analysis_result.total_lines,
+        "languages": analysis_result.languages,
+        "tech_stack": tech_stack,
+        "entry_points": analysis_result.entry_points,
+        "configuration_files": analysis_result.configuration_files,
+        "security_summary": analysis_result.security_summary,
+        "complexity_summary": analysis_result.complexity_summary,
+        "analysis_time": analysis_result.analysis_time
+    }
+
+
+def get_code_analysis_summary(analysis_result: CodeAnalysisResult) -> Dict[str, Any]:
+    """Получение краткой сводки анализа кода"""
+    if not analysis_result.success:
+        return {
+            "success": False,
+            "error": analysis_result.error_message
+        }
+    
+    return {
+        "success": True,
+        "total_files": analysis_result.total_files,
+        "total_lines": analysis_result.total_lines,
+        "languages": list(analysis_result.languages.keys()),
+        "avg_complexity": analysis_result.complexity_summary.get("average_complexity", 0),
+        "security_score": analysis_result.security_summary.get("security_score", 0),
+        "analysis_time": analysis_result.analysis_time
+    }
+
+
+# Экспорт основных классов и функций
+__all__ = [
+    "CodeAnalyzer",
+    "CodeAnalysisResult", 
+    "CodeFile",
+    "CodeAnalyzerError",
+    "PythonCodeAnalyzer",
+    "JavaScriptCodeAnalyzer", 
+    "JavaCodeAnalyzer",
+    "ConfigurationAnalyzer",
+    "create_code_analyzer",
+    "analyze_agent_codebase",
+    "extract_agent_technical_info",
+    "get_code_analysis_summary"
+]

@@ -466,56 +466,75 @@ class PromptAnalyzer:
                     try:
                         if source_type == "text":
                             if isinstance(source, (str, Path)):
-                                # Файл с текстом
-                                with open(source, 'r', encoding='utf-8') as f:
-                                    text_content = f.read()
-                                prompts = self.extractor.extract_from_text(text_content, str(source))
+                                path = Path(source)
+                                if path.exists() and path.is_file():
+                                    # Файл с текстом
+                                    with open(path, 'r', encoding='utf-8') as f:
+                                        text_content = f.read()
+                                    prompts = self.extractor.extract_from_text(text_content, str(source))
+                                else:
+                                    # Прямой текст (не файл)
+                                    prompts = self.extractor.extract_from_text(str(source), f"direct_text_{i}")
                             else:
                                 # Прямой текст
-                                prompts = self.extractor.extract_from_text(str(source), "direct_text")
+                                prompts = self.extractor.extract_from_text(str(source), f"direct_text_{i}")
                         
                         elif source_type == "code":
                             if isinstance(source, (str, Path)):
-                                # Файл с кодом
                                 path = Path(source)
-                                with open(path, 'r', encoding='utf-8') as f:
-                                    code_content = f.read()
-                                language = self._detect_code_language(path)
-                                prompts = self.extractor.extract_from_code(code_content, str(path), language)
+                                if path.exists() and path.is_file():
+                                    # Файл с кодом
+                                    with open(path, 'r', encoding='utf-8') as f:
+                                        code_content = f.read()
+                                    language = self._detect_code_language(path)
+                                    prompts = self.extractor.extract_from_code(code_content, str(path), language)
+                                else:
+                                    # Обрабатываем как текст
+                                    prompts = self.extractor.extract_from_text(str(source), f"code_text_{i}")
                             else:
                                 prompts = []
                         
                         elif source_type == "config":
                             if isinstance(source, dict):
                                 # Прямые данные конфигурации
-                                prompts = self.extractor.extract_from_config(source, "direct_config")
+                                prompts = self.extractor.extract_from_config(source, f"direct_config_{i}")
                             elif isinstance(source, (str, Path)):
-                                # Файл конфигурации
-                                with open(source, 'r', encoding='utf-8') as f:
-                                    if str(source).endswith('.json'):
-                                        config_data = json.load(f)
-                                        prompts = self.extractor.extract_from_config(config_data, str(source))
-                                    else:
-                                        # Для других форматов пока используем текстовый анализ
-                                        text_content = f.read()
-                                        prompts = self.extractor.extract_from_text(text_content, str(source))
+                                path = Path(source)
+                                if path.exists() and path.is_file():
+                                    # Файл конфигурации
+                                    with open(path, 'r', encoding='utf-8') as f:
+                                        if str(path).endswith('.json'):
+                                            config_data = json.load(f)
+                                            prompts = self.extractor.extract_from_config(config_data, str(source))
+                                        else:
+                                            # Для других форматов пока используем текстовый анализ
+                                            text_content = f.read()
+                                            prompts = self.extractor.extract_from_text(text_content, str(source))
+                                else:
+                                    # Обрабатываем как текст
+                                    prompts = self.extractor.extract_from_text(str(source), f"config_text_{i}")
                             else:
                                 prompts = []
                         
                         else:
                             # Неизвестный тип - пробуем как текст
                             if isinstance(source, (str, Path)):
-                                with open(source, 'r', encoding='utf-8') as f:
-                                    text_content = f.read()
-                                prompts = self.extractor.extract_from_text(text_content, str(source))
+                                path = Path(source)
+                                if path.exists() and path.is_file():
+                                    with open(path, 'r', encoding='utf-8') as f:
+                                        text_content = f.read()
+                                    prompts = self.extractor.extract_from_text(text_content, str(source))
+                                else:
+                                    # Прямой текст
+                                    prompts = self.extractor.extract_from_text(str(source), f"unknown_source_{i}")
                             else:
-                                prompts = self.extractor.extract_from_text(str(source), "unknown_source")
+                                prompts = self.extractor.extract_from_text(str(source), f"unknown_source_{i}")
                         
                         all_prompts.extend(prompts)
                         
                     except Exception as e:
                         self.logger.bind_context("prompt_analyzer", "prompt_analyzer").error(
-                            f"Ошибка обработки источника {source}: {e}"
+                            f"Ошибка обработки источника {str(source)[:50]}...: {e}"
                         )
                         continue
                 
@@ -556,16 +575,21 @@ class PromptAnalyzer:
         if isinstance(source, dict):
             return "config"
         elif isinstance(source, (str, Path)):
-            path = Path(source)
-            if path.exists() and path.is_file():
-                if path.suffix.lower() in ['.py', '.js', '.jsx', '.ts', '.tsx', '.java']:
-                    return "code"
-                elif path.suffix.lower() in ['.json', '.yaml', '.yml', '.toml']:
-                    return "config"
+            # Сначала проверяем, является ли это путем к существующему файлу
+            try:
+                path = Path(source)
+                if path.exists() and path.is_file():
+                    if path.suffix.lower() in ['.py', '.js', '.jsx', '.ts', '.tsx', '.java']:
+                        return "code"
+                    elif path.suffix.lower() in ['.json', '.yaml', '.yml', '.toml']:
+                        return "config"
+                    else:
+                        return "text"
                 else:
+                    # Если файл не существует, считаем что это прямой текст
                     return "text"
-            else:
-                # Строка, не являющаяся путем к файлу
+            except (OSError, ValueError):
+                # Если не удается создать Path (например, недопустимые символы), это текст
                 return "text"
         else:
             return "text"

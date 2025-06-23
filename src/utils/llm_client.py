@@ -42,7 +42,7 @@ class LLMError(Exception):
 class LLMConfig:
     """Конфигурация LLM клиента"""
     base_url: str = "http://127.0.0.1:1234"
-    model: str = "qwen3-8b"
+    model: str = "qwen3-4b"
     temperature: float = 0.1
     max_tokens: int = 4096
     timeout: int = 120
@@ -302,12 +302,28 @@ class LLMClient:
         try:
             return json.loads(response.content.strip())
         except json.JSONDecodeError as e:
-            # Пробуем очистить ответ от лишних символов
+            # Пробуем очистить ответ от лишних символов и тегов
             cleaned_content = response.content.strip()
+            
+            # Удаляем теги <think>...</think>
+            if '<think>' in cleaned_content and '</think>' in cleaned_content:
+                start = cleaned_content.find('</think>') + 8
+                cleaned_content = cleaned_content[start:].strip()
+            
+            # Удаляем markdown блоки
             if cleaned_content.startswith("```json"):
                 cleaned_content = cleaned_content[7:]
             if cleaned_content.endswith("```"):
                 cleaned_content = cleaned_content[:-3]
+            
+            # Ищем JSON объект в тексте
+            import re
+            json_match = re.search(r'\{.*\}', cleaned_content, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
             
             try:
                 return json.loads(cleaned_content.strip())
@@ -499,7 +515,7 @@ class RiskAnalysisLLMClient(LLMClient):
 def create_llm_client(
     client_type: str = "standard",
     base_url: str = "http://127.0.0.1:1234",
-    model: str = "qwen3-8b",
+    model: str = "qwen3-4b",
     temperature: float = 0.1
 ) -> LLMClient:
     """
@@ -541,7 +557,7 @@ async def get_llm_client() -> LLMClient:
         
         config = LLMConfig(
             base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-            model=os.getenv("LLM_MODEL", "qwen3-8b"),
+            model=os.getenv("LLM_MODEL", "qwen3-4b"),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
             max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096"))
         )
