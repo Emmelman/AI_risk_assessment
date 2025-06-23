@@ -59,7 +59,7 @@ def cli(ctx, log_level, log_file):
 @click.option('--output', '-o', help='Файл для сохранения результата (JSON)')
 @click.option('--quality-threshold', '-q', default=7.0, help='Порог качества для критика (0-10)')
 @click.option('--max-retries', '-r', default=3, help='Максимум повторов оценки')
-@click.option('--model', '-m', default='qwen3-8b', help='LLM модель')
+@click.option('--model', '-m', default='qwen3-4b', help='LLM модель')
 @click.pass_context
 async def assess(ctx, source_files, agent_name, output, quality_threshold, max_retries, model):
     """Запуск оценки рисков ИИ-агента"""
@@ -92,7 +92,7 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
         llm_healthy = await workflow.profiler.health_check()
         if not llm_healthy:
             console.print("[red]❌ LM Studio недоступен на localhost:1234[/red]")
-            console.print("Убедитесь что LM Studio запущен с моделью qwen3-8b")
+            console.print("Убедитесь что LM Studio запущен с моделью qwen3-4b")
             return
         
         console.print("[green]✅ LLM сервер доступен[/green]")

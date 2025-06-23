@@ -38,7 +38,7 @@ async def test_models():
         version="1.0",
         description="Тестовый чат-бот для проверки системы",
         agent_type=AgentType.CHATBOT,
-        llm_model="qwen3-8b",
+        llm_model="qwen3-4b",
         autonomy_level=AutonomyLevel.SUPERVISED,
         data_access=[DataSensitivity.INTERNAL],
         target_audience="Сотрудники банка",
@@ -121,7 +121,7 @@ async def test_llm_client():
     # Создаем клиент
     config = LLMConfig(
         base_url="http://127.0.0.1:1234",
-        model="qwen3-8b",
+        model="qwen3-4b",
         temperature=0.1,
         timeout=30
     )
@@ -134,7 +134,7 @@ async def test_llm_client():
         
         if not is_available:
             print("⚠️ LM Studio недоступен на localhost:1234")
-            print("   Запустите LM Studio с моделью qwen3-8b для полного тестирования")
+            print("   Запустите LM Studio с моделью qwen3-4b для полного тестирования")
             return
         
         print("✅ LM Studio доступен")
@@ -238,7 +238,7 @@ async def main():
         print("\n📋 Проверено:")
         print("✅ Pydantic модели данных")
         print("✅ SQLite база данных")
-        print("✅ LLM клиент (qwen3-8b)")
+        print("✅ LLM клиент (qwen3-4b)")
         print("✅ Система логирования")
         print("\n🚀 Готовы к Этапу 2: Инструменты анализа")
         

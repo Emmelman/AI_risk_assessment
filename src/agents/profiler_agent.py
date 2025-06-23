@@ -542,9 +542,9 @@ def create_profiler_node_function(profiler_agent: ProfilerAgent):
         # Запускаем профайлер
         result = await profiler_agent.run(input_data, assessment_id)
         
-        # Обновляем состояние
+        # Обновляем состояние - преобразуем AgentTaskResult в словарь
         updated_state = state.copy()
-        updated_state["profiling_result"] = result
+        updated_state["profiling_result"] = result.dict()  # Преобразуем в словарь
         
         if result.status == ProcessingStatus.COMPLETED:
             # Добавляем профиль агента в состояние для дальнейшего использования

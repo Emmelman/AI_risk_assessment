@@ -432,7 +432,13 @@ class LangGraphLogger:
         bound_logger = self.logger.bind_context(assessment_id, "quality_check")
         status = "✅ пройдена" if quality_score >= threshold else "❌ не пройдена"
         bound_logger.info(f"🔍 Проверка качества {risk_type}: {quality_score:.1f}/{threshold} - {status}")
-
+    
+    def log_workflow_step(self, assessment_id: str, step_name: str, details: str = ""):
+        """Логирование шага workflow"""
+        bound_logger = self.logger.bind_context(assessment_id, "workflow")
+        message = f"⚙️ Workflow шаг: {step_name}"
+        if details:
+            message += f" - {details}"
 
 # Добавляем LangGraph логгер к основному
 def get_langgraph_logger() -> LangGraphLogger:

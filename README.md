@@ -80,7 +80,7 @@ pip install -r requirements.txt
 
 ```bash
 # Запустите LM Studio
-# Загрузите модель qwen3-8b
+# Загрузите модель qwen3-4b
 # Запустите сервер на localhost:1234
 curl http://localhost:1234/v1/models  # Проверка
 ```
@@ -187,7 +187,7 @@ my_agent/
 ```bash
 # LLM Configuration
 LLM_BASE_URL=http://127.0.0.1:1234
-LLM_MODEL=qwen3-8b
+LLM_MODEL=qwen3-4b
 LLM_TEMPERATURE=0.1
 LLM_MAX_TOKENS=4096
 
@@ -355,7 +355,7 @@ MIT License - см. файл LICENSE
 curl http://localhost:1234/v1/models
 
 # Перезапустите LM Studio
-# Убедитесь что модель qwen3-8b загружена
+# Убедитесь что модель qwen3-4b загружена
 # Проверьте порт 1234
 ```
 

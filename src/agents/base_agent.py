@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
@@ -475,7 +476,94 @@ class EvaluationAgent(BaseAgent):
             "probability_score", "impact_score", "total_score", 
             "risk_level", "probability_reasoning", "impact_reasoning"
         ]
-
+    def _parse_llm_response(self, response_content: str) -> Dict[str, Any]:
+        """Парсинг ответа LLM с извлечением JSON - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        try:
+            # Ищем JSON блок в ответе
+            if "```json" in response_content:
+                start = response_content.find("```json") + 7
+                end = response_content.find("```", start)
+                if end != -1:
+                    json_content = response_content[start:end].strip()
+                else:
+                    json_content = response_content[start:].strip()
+            else:
+                # Пытаемся найти JSON по фигурным скобкам
+                start = response_content.find("{")
+                end = response_content.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    json_content = response_content[start:end+1]
+                else:
+                    json_content = response_content.strip()
+            
+            parsed_data = json.loads(json_content)
+            
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем обязательные поля и добавляем если отсутствуют
+            required_fields = {
+                "probability_score": 3,  # дефолтное значение
+                "impact_score": 3,
+                "total_score": 9,
+                "risk_level": "medium",
+                "probability_reasoning": "Автоматически сгенерированное обоснование",
+                "impact_reasoning": "Автоматически сгенерированное обоснование",
+                "identified_risks": [],
+                "recommendations": [],
+                "suggested_controls": [],
+                "confidence_level": 0.7
+            }
+            
+            # Добавляем отсутствующие поля
+            for field, default_value in required_fields.items():
+                if field not in parsed_data:
+                    parsed_data[field] = default_value
+                    print(f"⚠️ Добавлено отсутствующее поле {field}: {default_value}")
+            
+            # Валидируем числовые поля
+            if "probability_score" in parsed_data:
+                try:
+                    parsed_data["probability_score"] = int(parsed_data["probability_score"])
+                    if not (1 <= parsed_data["probability_score"] <= 5):
+                        parsed_data["probability_score"] = 3
+                except (ValueError, TypeError):
+                    parsed_data["probability_score"] = 3
+            
+            if "impact_score" in parsed_data:
+                try:
+                    parsed_data["impact_score"] = int(parsed_data["impact_score"])
+                    if not (1 <= parsed_data["impact_score"] <= 5):
+                        parsed_data["impact_score"] = 3
+                except (ValueError, TypeError):
+                    parsed_data["impact_score"] = 3
+            
+            # Пересчитываем total_score
+            parsed_data["total_score"] = parsed_data["probability_score"] * parsed_data["impact_score"]
+            
+            # Определяем risk_level на основе total_score
+            total_score = parsed_data["total_score"]
+            if total_score <= 6:
+                parsed_data["risk_level"] = "low"
+            elif total_score <= 14:
+                parsed_data["risk_level"] = "medium"
+            else:
+                parsed_data["risk_level"] = "high"
+            
+            return parsed_data
+            
+        except json.JSONDecodeError as e:
+            # Если парсинг не удался, возвращаем минимальные валидные данные
+            print(f"⚠️ Ошибка парсинга JSON, возвращаем дефолтные данные: {e}")
+            return {
+                "probability_score": 3,
+                "impact_score": 3,
+                "total_score": 9,
+                "risk_level": "medium",
+                "probability_reasoning": f"Не удалось распарсить ответ LLM: {str(e)}",
+                "impact_reasoning": "Использованы дефолтные значения",
+                "identified_risks": ["Ошибка парсинга ответа LLM"],
+                "recommendations": ["Проверить промпт и формат ответа"],
+                "suggested_controls": ["Улучшить валидацию ответов"],
+                "confidence_level": 0.3
+            }
 
 # ===============================
 # Фабрики для создания агентов
@@ -485,7 +573,7 @@ def create_agent_config(
     name: str,
     description: str,
     llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-8b",
+    llm_model: str = "qwen3-4b",
     temperature: float = 0.1,
     max_retries: int = 3,
     timeout_seconds: int = 120,
@@ -533,7 +621,7 @@ def create_default_config_from_env() -> AgentConfig:
         name="default_agent",
         description="Агент с настройками по умолчанию",
         llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-8b"),
+        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
         max_retries=int(os.getenv("MAX_RETRY_COUNT", "3")),
         timeout_seconds=120

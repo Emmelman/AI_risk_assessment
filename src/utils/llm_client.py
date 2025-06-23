@@ -1,7 +1,7 @@
 # src/utils/llm_client.py
 """
 Клиент для работы с LLM моделями
-Поддерживает qwen3-8b через LM Studio (localhost:1234)
+Поддерживает qwen3-4b через LM Studio (localhost:1234)
 """
 
 import json

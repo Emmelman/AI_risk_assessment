@@ -26,7 +26,7 @@ def test_env():
         load_dotenv()
         
         llm_url = os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234")
-        llm_model = os.getenv("LLM_MODEL", "qwen3-8b")
+        llm_model = os.getenv("LLM_MODEL", "qwen3-4b")
         
         print(f"✅ LLM URL: {llm_url}")
         print(f"✅ LLM Model: {llm_model}")
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     if success:
         print("🎉 Настройка проекта успешна!")
         print("\n📋 Следующие шаги:")
-        print("1. Запустите LM Studio с моделью qwen3-8b")
+        print("1. Запустите LM Studio с моделью qwen3-4b")
         print("2. Запустите сервер на localhost:1234")
         print("3. Начинайте разработку агентов!")
     else:

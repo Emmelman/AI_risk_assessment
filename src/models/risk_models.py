@@ -1,238 +1,63 @@
-# src/models/risk_models.py
+# src/models/risk_models.py - ПОЛНОСТЬЮ ОБНОВЛЕННАЯ ВЕРСИЯ
 """
 Модели данных для системы оценки рисков ИИ-агентов
-Основано на методике ПАО Сбербанк
+Обновлено для исправления ошибок WorkflowState
 """
 
-from enum import Enum
-from typing import Dict, List, Optional, Any
 from datetime import datetime
+from typing import Dict, List, Optional, Any, Union, Annotated
+from enum import Enum
+
 from pydantic import BaseModel, Field, validator
 
 
+# ===============================
+# Перечисления (Enums)
+# ===============================
+
 class RiskType(str, Enum):
-    """Типы рисков согласно методике Сбербанк"""
-    ETHICAL = "ethical"           # Этические и дискриминационные
-    STABILITY = "stability"       # Ошибки и нестабильность LLM
-    SECURITY = "security"         # Безопасность данных и систем
-    AUTONOMY = "autonomy"         # Автономность и управление
-    REGULATORY = "regulatory"     # Регуляторные и юридические
-    SOCIAL = "social"            # Социальные и манипулятивные
+    """Типы рисков ИИ-агентов"""
+    ETHICAL = "ethical"           # Этические и дискриминационные риски
+    STABILITY = "stability"       # Риски ошибок и нестабильности LLM
+    SECURITY = "security"         # Риски безопасности данных и систем  
+    AUTONOMY = "autonomy"         # Риски автономности и управления
+    REGULATORY = "regulatory"     # Регуляторные и юридические риски
+    SOCIAL = "social"            # Социальные и манипулятивные риски
 
 
 class RiskLevel(str, Enum):
     """Уровни риска"""
-    LOW = "low"          # 1-6 баллов
-    MEDIUM = "medium"    # 7-14 баллов
-    HIGH = "high"        # 15+ баллов
+    LOW = "low"           # 1-6 баллов
+    MEDIUM = "medium"     # 7-14 баллов  
+    HIGH = "high"         # 15-25 баллов
 
 
 class AgentType(str, Enum):
     """Типы ИИ-агентов"""
     CHATBOT = "chatbot"
     ASSISTANT = "assistant"
-    TRADER = "trader"
-    SCORER = "scorer"
-    ANALYZER = "analyzer"
+    ANALYZER = "analyzer" 
+    ADVISOR = "advisor"
+    MODERATOR = "moderator"
     GENERATOR = "generator"
     OTHER = "other"
 
 
-class DataSensitivity(str, Enum):
-    """Уровни чувствительности данных"""
-    PUBLIC = "public"
-    INTERNAL = "internal"
-    CONFIDENTIAL = "confidential"
-    CRITICAL = "critical"
-
-
 class AutonomyLevel(str, Enum):
     """Уровни автономности агента"""
-    MANUAL = "manual"          # Полный контроль человека
-    ASSISTED = "assisted"      # Помощь человеку
-    SUPERVISED = "supervised"  # Под надзором человека
-    AUTONOMOUS = "autonomous"  # Полная автономия
+    SUPERVISED = "supervised"         # Под постоянным надзором
+    SEMI_AUTONOMOUS = "semi_autonomous"  # Частично автономный
+    AUTONOMOUS = "autonomous"         # Полностью автономный
 
 
-# ===============================
-# Базовые модели для профайлинга
-# ===============================
+class DataSensitivity(str, Enum):
+    """Уровни чувствительности данных"""
+    PUBLIC = "public"           # Открытые данные
+    INTERNAL = "internal"       # Внутренние данные компании
+    CONFIDENTIAL = "confidential"  # Конфиденциальные данные
+    PERSONAL = "personal"       # Персональные данные
+    FINANCIAL = "financial"     # Финансовые данные
 
-class AgentProfile(BaseModel):
-    """Профиль ИИ-агента для оценки рисков"""
-    
-    # Основная информация
-    name: str = Field(..., description="Название агента")
-    version: str = Field("1.0", description="Версия агента")
-    description: str = Field(..., description="Описание назначения")
-    agent_type: AgentType = Field(..., description="Тип агента")
-    
-    # Техническая спецификация
-    llm_model: str = Field(..., description="Используемая LLM модель")
-    autonomy_level: AutonomyLevel = Field(..., description="Уровень автономности")
-    data_access: List[DataSensitivity] = Field(default_factory=list, description="Доступ к типам данных")
-    external_apis: List[str] = Field(default_factory=list, description="Внешние API")
-    
-    # Бизнес-контекст
-    target_audience: str = Field(..., description="Целевая аудитория")
-    operations_per_hour: Optional[int] = Field(None, description="Операций в час")
-    revenue_per_operation: Optional[float] = Field(None, description="Доход с операции, руб")
-    
-    # Промпты и ограничения
-    system_prompts: List[str] = Field(default_factory=list, description="Системные промпты")
-    guardrails: List[str] = Field(default_factory=list, description="Ограничения безопасности")
-    
-    # Метаданные
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
-    source_files: List[str] = Field(default_factory=list, description="Исходные файлы")
-
-
-class RiskEvaluation(BaseModel):
-    """Оценка одного типа риска"""
-    
-    risk_type: RiskType = Field(..., description="Тип риска")
-    probability_score: int = Field(..., ge=1, le=5, description="Вероятность (1-5)")
-    impact_score: int = Field(..., ge=1, le=5, description="Тяжесть последствий (1-5)")
-    total_score: Optional[int] = Field(None, ge=1, le=25, description="Итоговый балл")
-    risk_level: Optional[RiskLevel] = Field(None, description="Уровень риска")
-    
-    # Обоснование оценки
-    probability_reasoning: str = Field(..., description="Обоснование вероятности")
-    impact_reasoning: str = Field(..., description="Обоснование тяжести")
-    key_factors: List[str] = Field(default_factory=list, description="Ключевые факторы риска")
-    recommendations: List[str] = Field(default_factory=list, description="Рекомендации")
-    
-    # Метаданные
-    evaluator_agent: str = Field(..., description="Агент-оценщик")
-    evaluation_time: datetime = Field(default_factory=datetime.now)
-    confidence_level: float = Field(..., ge=0.0, le=1.0, description="Уверенность в оценке")
-    
-    def __init__(self, **data):
-        # Вычисляем total_score и risk_level перед валидацией
-        if 'total_score' not in data and 'probability_score' in data and 'impact_score' in data:
-            data['total_score'] = data['probability_score'] * data['impact_score']
-        
-        if 'risk_level' not in data and 'total_score' in data:
-            score = data['total_score']
-            if score <= 6:
-                data['risk_level'] = RiskLevel.LOW
-            elif score <= 14:
-                data['risk_level'] = RiskLevel.MEDIUM
-            else:
-                data['risk_level'] = RiskLevel.HIGH
-        
-        super().__init__(**data)
-    
-    @validator('total_score', always=True)
-    def calculate_total_score(cls, v, values):
-        """Автоматический расчет итогового балла"""
-        if v is None and 'probability_score' in values and 'impact_score' in values:
-            return values['probability_score'] * values['impact_score']
-        return v
-    
-    @validator('risk_level', always=True)
-    def determine_risk_level(cls, v, values):
-        """Автоматическое определение уровня риска"""
-        if v is None and 'total_score' in values:
-            score = values['total_score']
-            if score <= 6:
-                return RiskLevel.LOW
-            elif score <= 14:
-                return RiskLevel.MEDIUM
-            else:
-                return RiskLevel.HIGH
-        return v
-
-
-class CriticEvaluation(BaseModel):
-    """Оценка критика работы агентов-оценщиков"""
-    
-    risk_type: RiskType = Field(..., description="Проверяемый тип риска")
-    quality_score: float = Field(..., ge=0.0, le=10.0, description="Качество оценки (0-10)")
-    is_acceptable: bool = Field(..., description="Приемлемо ли качество")
-    
-    # Замечания и рекомендации
-    issues_found: List[str] = Field(default_factory=list, description="Найденные проблемы")
-    improvement_suggestions: List[str] = Field(default_factory=list, description="Предложения по улучшению")
-    
-    # Метаданные
-    critic_reasoning: str = Field(..., description="Обоснование критика")
-    review_time: datetime = Field(default_factory=datetime.now)
-
-
-class FinancialLossEstimate(BaseModel):
-    """Количественная оценка финансовых потерь"""
-    
-    risk_type: RiskType = Field(..., description="Тип риска")
-    expected_loss: float = Field(..., ge=0.0, description="Ожидаемые потери, руб")
-    exposure_amount: Optional[float] = Field(None, description="Подверженность риску, руб")
-    probability: Optional[float] = Field(None, ge=0.0, le=1.0, description="Вероятность (0-1)")
-    recovery_rate: Optional[float] = Field(None, ge=0.0, le=1.0, description="Степень возмещения")
-    
-    calculation_method: str = Field(..., description="Метод расчета")
-    assumptions: List[str] = Field(default_factory=list, description="Допущения расчета")
-
-
-# ===============================
-# Итоговые модели результата
-# ===============================
-
-class AgentRiskAssessment(BaseModel):
-    """Итоговая оценка рисков ИИ-агента"""
-    
-    # Основная информация
-    agent_profile: AgentProfile = Field(..., description="Профиль агента")
-    assessment_id: str = Field(..., description="ID оценки")
-    
-    # Оценки по типам рисков
-    risk_evaluations: Dict[RiskType, RiskEvaluation] = Field(..., description="Оценки рисков")
-    critic_evaluations: Dict[RiskType, CriticEvaluation] = Field(default_factory=dict, description="Оценки критика")
-    
-    # Итоговые результаты
-    overall_risk_score: int = Field(..., description="Общий балл риска")
-    overall_risk_level: RiskLevel = Field(..., description="Общий уровень риска")
-    highest_risk_areas: List[RiskType] = Field(default_factory=list, description="Области наивысшего риска")
-    
-    # Финансовые оценки
-    financial_estimates: Dict[RiskType, FinancialLossEstimate] = Field(default_factory=dict)
-    total_expected_loss: Optional[float] = Field(None, description="Общие ожидаемые потери")
-    
-    # Рекомендации
-    priority_recommendations: List[str] = Field(default_factory=list, description="Приоритетные рекомендации")
-    suggested_guardrails: List[str] = Field(default_factory=list, description="Предлагаемые меры защиты")
-    
-    # Метаданные процесса
-    assessment_timestamp: datetime = Field(default_factory=datetime.now)
-    processing_time_seconds: Optional[float] = Field(None, description="Время обработки")
-    quality_checks_passed: bool = Field(True, description="Прошли ли проверки качества")
-    
-    @validator('overall_risk_score', always=True)
-    def calculate_overall_score(cls, v, values):
-        """Расчет общего балла как максимум среди всех типов рисков"""
-        if 'risk_evaluations' in values:
-            evaluations = values['risk_evaluations']
-            if evaluations:
-                return max([eval.total_score for eval in evaluations.values()])
-        return v
-    
-    @validator('overall_risk_level', always=True)
-    def determine_overall_level(cls, v, values):
-        """Определение общего уровня риска"""
-        if 'overall_risk_score' in values:
-            score = values['overall_risk_score']
-            if score <= 6:
-                return RiskLevel.LOW
-            elif score <= 14:
-                return RiskLevel.MEDIUM
-            else:
-                return RiskLevel.HIGH
-        return v
-
-
-# ===============================
-# Вспомогательные модели
-# ===============================
 
 class ProcessingStatus(str, Enum):
     """Статусы обработки"""
@@ -241,6 +66,134 @@ class ProcessingStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     RETRY_NEEDED = "retry_needed"
+
+
+# ===============================
+# Основные модели данных
+# ===============================
+
+class AgentProfile(BaseModel):
+    """Профиль ИИ-агента для анализа"""
+    
+    # Основная информация
+    name: str = Field(..., description="Название агента")
+    description: str = Field(..., description="Описание функций агента")
+    version: Optional[str] = Field(None, description="Версия агента")
+    
+    # Классификация
+    agent_type: AgentType = Field(..., description="Тип агента")
+    llm_model: str = Field(..., description="Используемая LLM модель")
+    autonomy_level: AutonomyLevel = Field(..., description="Уровень автономности")
+    
+    # Доступ к данным
+    data_access: List[DataSensitivity] = Field(default_factory=list, description="Типы доступных данных")
+    target_audience: str = Field(..., description="Целевая аудитория")
+    
+    # Технические детали
+    system_prompts: List[str] = Field(default_factory=list, description="Системные промпты")
+    guardrails: List[str] = Field(default_factory=list, description="Ограничения безопасности")
+    integrations: List[str] = Field(default_factory=list, description="Интеграции с системами")
+    
+    # Файлы анализа
+    analyzed_files: List[str] = Field(default_factory=list, description="Проанализированные файлы")
+    code_complexity: Optional[int] = Field(None, description="Сложность кода (1-10)")
+    documentation_quality: Optional[int] = Field(None, description="Качество документации (1-10)")
+    
+    # Временные метки
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class RiskEvaluation(BaseModel):
+    """Оценка конкретного типа риска"""
+    
+    # Идентификация
+    risk_type: RiskType = Field(..., description="Тип риска")
+    evaluator_agent: str = Field(..., description="Агент, проводивший оценку")
+    
+    # Оценки
+    probability_score: int = Field(..., ge=1, le=5, description="Вероятность риска (1-5)")
+    impact_score: int = Field(..., ge=1, le=5, description="Тяжесть последствий (1-5)")
+    total_score: int = Field(..., ge=1, le=25, description="Общий балл риска")
+    risk_level: RiskLevel = Field(..., description="Уровень риска")
+    
+    # Обоснования
+    probability_reasoning: str = Field(..., description="Обоснование вероятности")
+    impact_reasoning: str = Field(..., description="Обоснование тяжести")
+    identified_risks: List[str] = Field(default_factory=list, description="Выявленные риски")
+    
+    # Рекомендации
+    recommendations: List[str] = Field(default_factory=list, description="Рекомендации по снижению")
+    suggested_controls: List[str] = Field(default_factory=list, description="Предлагаемые меры контроля")
+    
+    # Метаданные
+    confidence_level: float = Field(..., ge=0.0, le=1.0, description="Уровень уверенности")
+    timestamp: datetime = Field(default_factory=datetime.now)
+    
+    @validator('total_score', always=True)
+    def calculate_total_score(cls, v, values):
+        """Автоматический расчет общего балла"""
+        prob = values.get('probability_score', 1)
+        impact = values.get('impact_score', 1)
+        return prob * impact
+    
+    @validator('risk_level', always=True)
+    def determine_risk_level(cls, v, values):
+        """Автоматическое определение уровня риска"""
+        total_score = values.get('total_score', 1)
+        if total_score <= 6:
+            return RiskLevel.LOW
+        elif total_score <= 14:
+            return RiskLevel.MEDIUM
+        else:
+            return RiskLevel.HIGH
+
+
+class CriticEvaluation(BaseModel):
+    """Критическая оценка качества анализа риска"""
+    
+    # Оценка качества
+    quality_score: float = Field(..., ge=0.0, le=10.0, description="Оценка качества (0-10)")
+    is_acceptable: bool = Field(..., description="Приемлемо ли качество")
+    
+    # Анализ
+    clarity_score: float = Field(..., ge=0.0, le=10.0, description="Ясность рассуждений")
+    completeness_score: float = Field(..., ge=0.0, le=10.0, description="Полнота анализа")
+    reasoning_score: float = Field(..., ge=0.0, le=10.0, description="Качество обоснований")
+    
+    # Комментарии
+    feedback: str = Field(..., description="Обратная связь от критика")
+    improvement_suggestions: List[str] = Field(default_factory=list, description="Предложения по улучшению")
+    
+    # Метаданные
+    critic_agent: str = Field(..., description="Агент-критик")
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+
+class AgentRiskAssessment(BaseModel):
+    """Полная оценка рисков ИИ-агента"""
+    
+    # Основная информация
+    agent_profile: AgentProfile = Field(..., description="Профиль агента")
+    assessment_id: str = Field(..., description="Уникальный ID оценки")
+    
+    # Результаты оценки
+    risk_evaluations: Dict[str, RiskEvaluation] = Field(default_factory=dict, description="Оценки по типам рисков")
+    critic_evaluations: Dict[str, CriticEvaluation] = Field(default_factory=dict, description="Критические оценки")
+    
+    # Общие результаты
+    overall_risk_score: int = Field(..., description="Общий балл риска")
+    overall_risk_level: RiskLevel = Field(..., description="Общий уровень риска")
+    highest_risk_areas: List[str] = Field(default_factory=list, description="Области наивысшего риска")
+    
+    # Рекомендации
+    priority_recommendations: List[str] = Field(default_factory=list, description="Приоритетные рекомендации")
+    suggested_guardrails: List[str] = Field(default_factory=list, description="Предлагаемые ограничения")
+    
+    # Метаданные процесса
+    processing_time_seconds: float = Field(..., description="Время обработки в секундах")
+    quality_checks_passed: bool = Field(..., description="Прошли ли проверки качества")
+    assessment_timestamp: datetime = Field(default_factory=datetime.now)
 
 
 class AgentTaskResult(BaseModel):
@@ -268,26 +221,214 @@ class AgentTaskResult(BaseModel):
         return v
 
 
+# ===============================
+# WorkflowState - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# ===============================
+
 class WorkflowState(BaseModel):
-    """Состояние workflow для LangGraph"""
+    """Состояние workflow для LangGraph - с поддержкой словарных методов"""
+    
+    # Идентификаторы
+    assessment_id: Annotated[Optional[str], "assessment_id"] = Field(None, description="ID оценки")
+    preliminary_agent_name: Optional[str] = Field(None, description="Предварительное имя агента")
     
     # Входные данные
-    agent_profile: Optional[AgentProfile] = None
-    source_files: List[str] = Field(default_factory=list)
+    source_files: List[str] = Field(default_factory=list, description="Файлы для анализа")
+    agent_profile: Optional[Dict[str, Any]] = Field(None, description="Профиль агента")
     
     # Промежуточные результаты
-    profiling_result: Optional[AgentTaskResult] = None
-    evaluation_results: Dict[RiskType, AgentTaskResult] = Field(default_factory=dict)
-    critic_results: Dict[RiskType, AgentTaskResult] = Field(default_factory=dict)
+    profiling_result: Optional[Dict[str, Any]] = Field(None, description="Результат профилирования")
+    evaluation_results: Annotated[Dict[str, Dict[str, Any]], "evaluation_results"] = Field(default_factory=dict, description="Результаты оценки рисков")
+    critic_results: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Результаты критического анализа")
     
     # Итоговый результат
-    final_assessment: Optional[AgentRiskAssessment] = None
+    final_assessment: Optional[Dict[str, Any]] = Field(None, description="Итоговая оценка")
     
     # Управление процессом
-    current_step: str = Field("initialization", description="Текущий шаг")
+    current_step: Annotated[str, "current_step"] = Field("initialization", description="Текущий шаг")
     retry_count: Dict[str, int] = Field(default_factory=dict, description="Счетчики повторов")
     max_retries: int = Field(3, description="Максимум повторов")
     
-    # Настройки качества
+    # Настройки качества  
     quality_threshold: float = Field(7.0, description="Порог качества для критика")
     require_critic_approval: bool = Field(True, description="Требовать одобрение критика")
+    
+    # Контроль ошибок
+    error_message: Optional[str] = Field(None, description="Сообщение об ошибке")
+    retry_needed: List[str] = Field(default_factory=list, description="Риски, требующие повтора")
+    
+    # Временные метки
+    start_time: Optional[datetime] = Field(None, description="Время начала")
+    processing_time: Optional[float] = Field(None, description="Время обработки в секундах")
+    
+    # Статистика
+    average_quality: Optional[float] = Field(None, description="Средняя оценка качества")
+    
+    # Сохраненные данные
+    saved_assessment_id: Optional[str] = Field(None, description="ID сохраненной оценки")
+    profile_id: Optional[str] = Field(None, description="ID профиля агента")
+    
+
+    # Reducer для handling concurrent updates
+    @staticmethod
+    def assessment_id_reducer(left: Optional[str], right: Optional[str]) -> Optional[str]:
+        """Reducer для assessment_id - берем существующее значение"""
+        return left if left is not None else right
+
+    @staticmethod
+    def evaluation_results_reducer(left: Dict, right: Dict) -> Dict:
+        """Reducer для evaluation_results - объединяем результаты"""
+        result = left.copy() if left else {}
+        if right:
+            result.update(right)
+        return result
+
+    class Config:
+        """Конфигурация модели"""
+        extra = "allow"  # Разрешаем дополнительные поля
+        use_enum_values = True
+        arbitrary_types_allowed = True
+        
+    def __getitem__(self, key: str):
+        """Поддержка доступа как к словарю"""
+        return getattr(self, key, None)
+    
+    def __setitem__(self, key: str, value):
+        """Поддержка записи как в словарь"""
+        setattr(self, key, value)
+    
+    def get(self, key: str, default=None):
+        """Метод get() как у словаря"""
+        return getattr(self, key, default)
+    
+    def update(self, updates: Dict[str, Any]):
+        """Обновление значений как у словаря"""
+        for key, value in updates.items():
+            setattr(self, key, value)
+    
+    def dict(self, **kwargs) -> Dict[str, Any]:
+        """Преобразование в словарь с поддержкой всех полей"""
+        result = super().dict(**kwargs)
+        
+        # Добавляем все дополнительные атрибуты
+        for key, value in self.__dict__.items():
+            if key not in result and not key.startswith('_'):
+                if isinstance(value, datetime):
+                    result[key] = value.isoformat()
+                else:
+                    result[key] = value
+        
+        return result
+
+
+# ===============================
+# Вспомогательные функции
+# ===============================
+
+def create_risk_evaluation(
+    risk_type: RiskType,
+    probability: int,
+    impact: int,
+    probability_reasoning: str,
+    impact_reasoning: str,
+    evaluator_agent: str,
+    recommendations: List[str] = None,
+    confidence: float = 0.8
+) -> RiskEvaluation:
+    """Создание оценки риска с автоматическим расчетом"""
+    
+    return RiskEvaluation(
+        risk_type=risk_type,
+        evaluator_agent=evaluator_agent,
+        probability_score=probability,
+        impact_score=impact,
+        probability_reasoning=probability_reasoning,
+        impact_reasoning=impact_reasoning,
+        recommendations=recommendations or [],
+        confidence_level=confidence
+    )
+
+
+def calculate_overall_risk_score(risk_evaluations: Dict[str, RiskEvaluation]) -> tuple[int, RiskLevel]:
+    """Расчет общего балла и уровня риска"""
+    
+    if not risk_evaluations:
+        return 1, RiskLevel.LOW
+    
+    total_scores = [eval.total_score for eval in risk_evaluations.values()]
+    overall_score = sum(total_scores) // len(total_scores)
+    
+    if overall_score <= 6:
+        return overall_score, RiskLevel.LOW
+    elif overall_score <= 14:
+        return overall_score, RiskLevel.MEDIUM
+    else:
+        return overall_score, RiskLevel.HIGH
+
+
+def extract_risk_evaluations_from_results(evaluation_results: Dict[str, Dict[str, Any]]) -> Dict[str, RiskEvaluation]:
+    """Извлечение RiskEvaluation из результатов агентов"""
+    
+    risk_evaluations = {}
+    
+    for risk_type, result in evaluation_results.items():
+        if isinstance(result, dict) and result.get("result_data"):
+            risk_eval_data = result["result_data"].get("risk_evaluation")
+            if risk_eval_data:
+                try:
+                    risk_evaluations[risk_type] = RiskEvaluation(**risk_eval_data)
+                except Exception as e:
+                    print(f"Ошибка создания RiskEvaluation для {risk_type}: {e}")
+    
+    return risk_evaluations
+
+
+def get_highest_risk_areas(risk_evaluations: Dict[str, RiskEvaluation], top_n: int = 3) -> List[str]:
+    """Получение областей наивысшего риска"""
+    
+    if not risk_evaluations:
+        return []
+    
+    # Сортируем по общему баллу
+    sorted_risks = sorted(
+        risk_evaluations.items(),
+        key=lambda x: x[1].total_score,
+        reverse=True
+    )
+    
+    return [risk_type for risk_type, _ in sorted_risks[:top_n]]
+
+
+def validate_workflow_state(state: Dict[str, Any]) -> WorkflowState:
+    """Валидация и создание WorkflowState из словаря"""
+    
+    try:
+        return WorkflowState(**state)
+    except Exception as e:
+        print(f"Ошибка валидации WorkflowState: {e}")
+        # Возвращаем минимальное валидное состояние
+        return WorkflowState(
+            source_files=state.get("source_files", []),
+            current_step=state.get("current_step", "error"),
+            error_message=f"Ошибка валидации: {str(e)}"
+        )
+
+
+# ===============================
+# Экспорт
+# ===============================
+
+__all__ = [
+    # Перечисления
+    "RiskType", "RiskLevel", "AgentType", "AutonomyLevel", 
+    "DataSensitivity", "ProcessingStatus",
+    
+    # Основные модели
+    "AgentProfile", "RiskEvaluation", "CriticEvaluation",
+    "AgentRiskAssessment", "AgentTaskResult", "WorkflowState",
+    
+    # Вспомогательные функции
+    "create_risk_evaluation", "calculate_overall_risk_score",
+    "extract_risk_evaluations_from_results", "get_highest_risk_areas",
+    "validate_workflow_state"
+]

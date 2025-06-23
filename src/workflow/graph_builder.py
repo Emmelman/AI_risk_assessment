@@ -17,13 +17,14 @@ from ..models.risk_models import (
 )
 from ..agents.profiler_agent import create_profiler_agent, create_profiler_node_function
 from ..agents.evaluator_agents import (
-    create_all_evaluator_agents, create_evaluator_nodes_for_langgraph,
+    create_all_evaluator_agents, create_evaluator_nodes_for_langgraph_fixed,
     extract_risk_evaluations_from_results, calculate_overall_risk_score,
     get_highest_risk_areas
 )
 from ..agents.critic_agent import (
-    create_critic_agent, create_critic_node_function, create_quality_check_router
+    create_critic_agent, create_quality_check_router
 )
+from ..agents.evaluator_agents import create_critic_node_function_fixed
 from ..utils.logger import get_langgraph_logger, log_graph_node, log_conditional_edge_func
 from ..models.database import get_db_manager
 
@@ -43,7 +44,7 @@ class RiskAssessmentWorkflow:
     def __init__(
         self,
         llm_base_url: str = "http://127.0.0.1:1234",
-        llm_model: str = "qwen3-8b",
+        llm_model: str = "qwen3-4b",
         quality_threshold: float = 7.0,
         max_retries: int = 3
     ):
@@ -94,16 +95,25 @@ class RiskAssessmentWorkflow:
         # 3. Подготовка к оценке
         workflow.add_node("evaluation_preparation", self._evaluation_preparation_node)
         
-        # 4. Параллельная оценка рисков (6 узлов)
-        evaluator_nodes = create_evaluator_nodes_for_langgraph(self.evaluators)
+        # 4. Параллельная оценка рисков (6 узлов) - с исправлением concurrent updates
+        evaluator_nodes = create_evaluator_nodes_for_langgraph_fixed(self.evaluators)
         for node_name, node_func in evaluator_nodes.items():
-            workflow.add_node(node_name, log_graph_node(node_name)(node_func))
+            # Оборачиваем узел для предотвращения concurrent updates
+            def create_safe_evaluator_node(original_func):
+                async def safe_node(state):
+                    result = await original_func(state)
+                    # Возвращаем только изменения для этого конкретного узла
+                    return {"evaluation_results": result.get("evaluation_results", {})}
+                return safe_node
+            
+            safe_node_func = create_safe_evaluator_node(node_func)
+            workflow.add_node(node_name, log_graph_node(node_name)(safe_node_func))
         
         # 5. Сбор результатов оценки
         workflow.add_node("evaluation_collection", self._evaluation_collection_node)
         
         # 6. Критический анализ
-        critic_node = create_critic_node_function(self.critic)
+        critic_node = create_critic_node_function_fixed(self.critic)
         workflow.add_node("critic_analysis", log_graph_node("critic_analysis")(critic_node))
         
         # 7. Проверка качества и решение о повторах
@@ -535,7 +545,7 @@ class RiskAssessmentWorkflow:
 
 def create_risk_assessment_workflow(
     llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-8b",
+    llm_model: str = "qwen3-4b",
     quality_threshold: float = 7.0,
     max_retries: int = 3
 ) -> RiskAssessmentWorkflow:
@@ -565,7 +575,7 @@ def create_workflow_from_env() -> RiskAssessmentWorkflow:
     
     return create_risk_assessment_workflow(
         llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-8b"),
+        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
         quality_threshold=float(os.getenv("QUALITY_THRESHOLD", "7.0")),
         max_retries=int(os.getenv("MAX_RETRY_COUNT", "3"))
     )

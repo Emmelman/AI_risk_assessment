@@ -115,7 +115,7 @@ def create_env_file():
     
     env_content = """# LLM Configuration
 LLM_BASE_URL=http://127.0.0.1:1234
-LLM_MODEL=qwen3-8b
+LLM_MODEL=qwen3-4b
 LLM_TEMPERATURE=0.1
 LLM_MAX_TOKENS=4096
 
@@ -346,7 +346,7 @@ def test_env():
         load_dotenv()
         
         llm_url = os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234")
-        llm_model = os.getenv("LLM_MODEL", "qwen3-8b")
+        llm_model = os.getenv("LLM_MODEL", "qwen3-4b")
         
         print(f"✅ LLM URL: {llm_url}")
         print(f"✅ LLM Model: {llm_model}")
@@ -403,7 +403,7 @@ if __name__ == "__main__":
     print("\nДля проверки запустите: python test_setup.py")
     print("\nНастройка LM Studio:")
     print("1. Запустите LM Studio")
-    print("2. Загрузите модель qwen3-8b") 
+    print("2. Загрузите модель qwen3-4b") 
     print("3. Запустите сервер на localhost:1234")
     print("4. Протестируйте: curl http://localhost:1234/v1/models")
 
@@ -449,7 +449,7 @@ def main():
     print("   Linux/Mac: source ai_risk_env/bin/activate")
     print("   Windows:   ai_risk_env\\Scripts\\activate")
     print("2. Установите библиотеки: python install_libraries.py")
-    print("3. Запустите LM Studio с моделью qwen3-8b на localhost:1234")
+    print("3. Запустите LM Studio с моделью qwen3-4b на localhost:1234")
 
 if __name__ == "__main__":
     main()
