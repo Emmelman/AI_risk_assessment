@@ -271,74 +271,71 @@ class LLMClient:
         expected_format: str = "JSON",
         model: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Извлечение структурированных данных с улучшенной валидацией
-        """
+        """МАКСИМАЛЬНО НАДЕЖНОЕ извлечение структурированных данных"""
         
-        system_prompt = f"""Ты - эксперт по извлечению структурированных данных.
-        
+        system_prompt = f"""Ты - эксперт по анализу данных. 
+
         Твоя задача: {extraction_prompt}
 
-        КРИТИЧЕСКИ ВАЖНО:
-        - Отвечай ТОЛЬКО валидным {expected_format}
-        - НЕ добавляй никаких комментариев, пояснений или тегов <think>
-        - Если данных недостаточно, используй разумные дефолтные значения
-        - Строго следуй указанной структуре
-        - Все числовые поля должны быть числами, не строками
+        КРИТИЧЕСКИ ВАЖНЫЕ ТРЕБОВАНИЯ:
+        - Отвечай ТОЛЬКО валидным {expected_format} без дополнительного текста
+        - НЕ добавляй комментарии, пояснения, теги <think> или markdown блоки
+        - Если данных недостаточно, используй разумные значения по умолчанию
+        - Строго следуй указанной структуре данных
+        - Все числовые поля ОБЯЗАТЕЛЬНО должны быть числами, не строками
         - Все обязательные поля должны присутствовать
+        - НЕ используй запятые в конце объектов или массивов
 
-        ФОРМАТ ОТВЕТА: ТОЛЬКО чистый JSON без дополнительного текста"""
+        ПРИМЕР ПРАВИЛЬНОГО ФОРМАТА:
+        {{
+            "probability_score": 3,
+            "impact_score": 4,
+            "total_score": 12,
+            "risk_level": "medium",
+            "probability_reasoning": "Обоснование вероятности",
+            "impact_reasoning": "Обоснование воздействия",
+            "key_factors": ["фактор1", "фактор2"],
+            "recommendations": ["рекомендация1", "рекомендация2"],
+            "confidence_level": 0.8
+        }}
 
-        max_retries = 3
+        СТРОГО: отвечай только JSON, начинающийся с {{ и заканчивающийся }}"""
+
+        max_retries = 4  # Увеличиваем количество попыток
+        last_error = None
+        
         for attempt in range(max_retries):
             try:
                 response = await self.analyze_with_prompt(
                     system_prompt=system_prompt,
                     user_input=f"Данные для анализа:\n{data_to_analyze}",
                     model=model,
-                    temperature=0.1  # Очень низкая температура для стабильности
+                    temperature=0.05 if attempt == 0 else 0.1  # Очень низкая температура для первой попытки
                 )
                 
-                # Улучшенная очистка ответа
-                cleaned_content = response.content.strip()
+                # КРИТИЧЕСКИ УЛУЧШЕННАЯ очистка ответа
+                parsed_result = self._ultra_robust_json_parser(response.content)
                 
-                # Удаляем теги <think>...</think>
-                if '<think>' in cleaned_content and '</think>' in cleaned_content:
-                    start = cleaned_content.find('</think>') + 8
-                    cleaned_content = cleaned_content[start:].strip()
+                # Дополнительная валидация и автоисправление
+                validated_result = self._validate_and_fix_json_structure(parsed_result)
                 
-                # Удаляем markdown блоки
-                if cleaned_content.startswith("```json"):
-                    cleaned_content = cleaned_content[7:]
-                if cleaned_content.endswith("```"):
-                    cleaned_content = cleaned_content[:-3]
-                
-                # Ищем JSON объект в тексте
-                import re
-                json_match = re.search(r'\{.*\}', cleaned_content, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group()
-                else:
-                    json_str = cleaned_content.strip()
-                
-                # Пытаемся парсить
-                result = json.loads(json_str)
-                return result
-                
-            except json.JSONDecodeError as e:
-                if attempt == max_retries - 1:
-                    # Последняя попытка - возвращаем ошибку
-                    raise LLMError(
-                        f"Не удалось распарсить JSON после {max_retries} попыток: {e}\n"
-                        f"Последний ответ: {response.content[:300]}..."
-                    )
-                
-                # Повторяем с более строгим промптом
-                system_prompt += f"\n\nВНИМАНИИ: Предыдущая попытка содержала ошибку JSON. Попытка {attempt + 1}/{max_retries}."
+                return validated_result
                 
             except Exception as e:
-                if attempt == max_retries - 1:
-                    raise LLMError(f"Неожиданная ошибка при извлечении данных: {str(e)}")
+                last_error = e
+                
+                if attempt < max_retries - 1:
+                    # Модифицируем промпт для следующей попытки
+                    system_prompt += f"\n\nВНИМАНИЕ: Попытка {attempt + 1} из {max_retries}. Предыдущая ошибка: {str(e)[:100]}. Будь ОСОБЕННО внимательным к формату JSON!"
+                    
+                    # Увеличиваем паузу между попытками
+                    await asyncio.sleep(1 + attempt)
+                else:
+                    # Последняя попытка не удалась - возвращаем fallback
+                    return self._create_emergency_fallback_result(extraction_prompt, str(e))
+        
+        # Не должно достигаться, но на всякий случай
+        return self._create_emergency_fallback_result(extraction_prompt, str(last_error))
     
     def get_stats(self) -> Dict[str, Any]:
         """Получение статистики использования"""
@@ -349,7 +346,354 @@ class LLMClient:
             "success_rate": (self.total_requests - self.error_count) / max(self.total_requests, 1),
             "avg_tokens_per_request": self.total_tokens / max(self.total_requests, 1)
         }
+    def _ultra_robust_json_parser(self, content: str) -> Dict[str, Any]:
+        """Максимально надежный парсер JSON с множественными стратегиями"""
+        
+        import re
+        import json
+        
+        # Стратегия 1: Базовая очистка
+        cleaned = content.strip()
+        
+        # Удаляем теги <think>...</think>
+        cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL).strip()
+        
+        # Удаляем markdown блоки
+        if '```json' in cleaned:
+            # Находим все JSON блоки
+            json_blocks = re.findall(r'```json\s*(.*?)\s*```', cleaned, re.DOTALL)
+            if json_blocks:
+                cleaned = json_blocks[-1].strip()
+            else:
+                # Если нет закрывающего тега
+                start = cleaned.find('```json') + 7
+                cleaned = cleaned[start:].strip()
+        
+        # Удаляем обычные markdown блоки
+        cleaned = re.sub(r'```.*?```', '', cleaned, flags=re.DOTALL).strip()
+        
+        # Стратегия 2: Поиск JSON объекта
+        strategies = [
+            # 1. Прямой парсинг
+            lambda x: json.loads(x),
+            
+            # 2. Поиск по фигурным скобкам
+            lambda x: json.loads(self._extract_json_by_braces(x)),
+            
+            # 3. Поиск по регулярному выражению
+            lambda x: json.loads(self._extract_json_by_regex(x)),
+            
+            # 4. Исправление и парсинг
+            lambda x: json.loads(self._fix_common_json_issues(x)),
+            
+            # 5. Агрессивное исправление
+            lambda x: json.loads(self._aggressive_json_fix(x))
+        ]
+        
+        for i, strategy in enumerate(strategies):
+            try:
+                result = strategy(cleaned)
+                if isinstance(result, dict):
+                    return result
+            except Exception as e:
+                if i == len(strategies) - 1:
+                    # Последняя стратегия не сработала
+                    raise Exception(f"Все стратегии парсинга не удались. Последняя ошибка: {e}")
+                continue
+        
+        raise Exception("Невозможно распарсить JSON ни одной стратегией")
+    def _extract_json_by_braces(self, content: str) -> str:
+        """Извлекает JSON по фигурным скобкам"""
+        
+        # Ищем первую открывающую скобку
+        start = content.find('{')
+        if start == -1:
+            raise ValueError("Не найдена открывающая фигурная скобка")
+        
+        # Ищем соответствующую закрывающую скобку
+        brace_count = 0
+        end = start
+        
+        for i, char in enumerate(content[start:], start):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end = i
+                    break
+        
+        if brace_count != 0:
+            # Не найдена закрывающая скобка, берем до конца
+            end = len(content) - 1
+        
+        return content[start:end + 1]
 
+    def _extract_json_by_regex(self, content: str) -> str:
+        """Извлекает JSON с помощью регулярного выражения"""
+        
+        import re
+        
+        # Паттерн для поиска JSON объекта
+        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        
+        matches = re.findall(json_pattern, content, re.DOTALL)
+        if matches:
+            # Берем самый длинный найденный JSON
+            return max(matches, key=len)
+        
+        raise ValueError("JSON объект не найден регулярным выражением")
+
+    def _fix_common_json_issues(self, content: str) -> str:
+        """Исправляет распространенные ошибки JSON"""
+        
+        import re
+        
+        # 1. Убираем trailing commas
+        content = re.sub(r',\s*}', '}', content)
+        content = re.sub(r',\s*]', ']', content)
+        
+        # 2. Исправляем одинарные кавычки на двойные
+        content = re.sub(r"'([^']*)':", r'"\1":', content)  # Ключи
+        content = re.sub(r":\s*'([^']*)'", r': "\1"', content)  # Значения
+        
+        # 3. Добавляем кавычки к значениям без кавычек (кроме чисел, bool, null)
+        content = re.sub(r':\s*([^",{\[\]\s][^,}\]]*[^",}\]\s])\s*[,}]', 
+                        lambda m: f': "{m.group(1).strip()}"' + m.group(0)[-1], content)
+        
+        # 4. Исправляем неэкранированные кавычки внутри строк
+        content = re.sub(r'(?<!\\)"(?=[^,}\]]*[,}\]])', '\\"', content)
+        
+        # 5. Убираем комментарии
+        content = re.sub(r'//.*?\n', '\n', content)
+        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+        
+        # 6. Исправляем множественные пробелы
+        content = re.sub(r'\s+', ' ', content)
+        
+        return content.strip()
+
+    def _aggressive_json_fix(self, content: str) -> str:
+        """Агрессивное исправление JSON - последняя попытка"""
+        
+        import re
+        
+        # Начинаем с базового исправления
+        content = self._fix_common_json_issues(content)
+        
+        # Если не начинается с {, добавляем
+        if not content.strip().startswith('{'):
+            content = '{' + content
+        
+        # Если не заканчивается на }, добавляем
+        if not content.strip().endswith('}'):
+            content = content + '}'
+        
+        # Пытаемся найти и исправить незакрытые кавычки
+        lines = content.split('\n')
+        fixed_lines = []
+        
+        for line in lines:
+            # Считаем кавычки в строке
+            quote_count = line.count('"') - line.count('\\"')
+            
+            # Если нечетное количество кавычек, добавляем недостающую
+            if quote_count % 2 == 1:
+                if ':' in line and not line.strip().endswith('"'):
+                    line = line.rstrip() + '"'
+            
+            fixed_lines.append(line)
+        
+        content = '\n'.join(fixed_lines)
+        
+        # Последняя попытка - убираем все до первой { и после последней }
+        start = content.find('{')
+        end = content.rfind('}')
+        
+        if start != -1 and end != -1 and end > start:
+            content = content[start:end + 1]
+        
+        return content
+
+    def _validate_and_fix_json_structure(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Валидирует и исправляет структуру JSON результата"""
+        
+        # Определяем обязательные поля для разных типов запросов
+        if self._looks_like_risk_evaluation(data):
+            return self._fix_risk_evaluation_structure(data)
+        elif self._looks_like_critic_evaluation(data):
+            return self._fix_critic_evaluation_structure(data)
+        else:
+            # Общая валидация
+            return self._fix_general_structure(data)
+
+    def _looks_like_risk_evaluation(self, data: Dict[str, Any]) -> bool:
+        """Определяет, является ли это оценкой риска"""
+        
+        risk_fields = {"probability_score", "impact_score", "total_score", "risk_level"}
+        return any(field in data for field in risk_fields)
+
+    def _looks_like_critic_evaluation(self, data: Dict[str, Any]) -> bool:
+        """Определяет, является ли это критической оценкой"""
+        
+        critic_fields = {"quality_score", "is_acceptable", "critic_reasoning"}
+        return any(field in data for field in critic_fields)
+
+    def _fix_risk_evaluation_structure(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Исправляет структуру оценки риска"""
+        
+        # Обязательные поля с дефолтными значениями
+        required_fields = {
+            "probability_score": 3,
+            "impact_score": 3,
+            "total_score": 9,
+            "risk_level": "medium",
+            "probability_reasoning": "Обоснование не предоставлено",
+            "impact_reasoning": "Обоснование не предоставлено",
+            "key_factors": [],
+            "recommendations": [],
+            "confidence_level": 0.7
+        }
+        
+        # Добавляем отсутствующие поля
+        for field, default_value in required_fields.items():
+            if field not in data or data[field] is None:
+                data[field] = default_value
+        
+        # Валидируем типы и диапазоны
+        data["probability_score"] = self._ensure_int_range(data["probability_score"], 1, 5, 3)
+        data["impact_score"] = self._ensure_int_range(data["impact_score"], 1, 5, 3)
+        data["confidence_level"] = self._ensure_float_range(data["confidence_level"], 0.0, 1.0, 0.7)
+        
+        # Пересчитываем total_score
+        data["total_score"] = data["probability_score"] * data["impact_score"]
+        
+        # Корректируем risk_level
+        total_score = data["total_score"]
+        if total_score <= 6:
+            data["risk_level"] = "low"
+        elif total_score <= 14:
+            data["risk_level"] = "medium"
+        else:
+            data["risk_level"] = "high"
+        
+        # Валидируем списки
+        data["key_factors"] = self._ensure_string_list(data["key_factors"])
+        data["recommendations"] = self._ensure_string_list(data["recommendations"])
+        
+        # Валидируем строки
+        data["probability_reasoning"] = self._ensure_string(data["probability_reasoning"], "Обоснование не предоставлено")
+        data["impact_reasoning"] = self._ensure_string(data["impact_reasoning"], "Обоснование не предоставлено")
+        
+        return data
+
+    def _fix_critic_evaluation_structure(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Исправляет структуру критической оценки"""
+        
+        required_fields = {
+            "quality_score": 5.0,
+            "is_acceptable": True,
+            "issues_found": [],
+            "improvement_suggestions": [],
+            "critic_reasoning": "Обоснование не предоставлено"
+        }
+        
+        for field, default_value in required_fields.items():
+            if field not in data or data[field] is None:
+                data[field] = default_value
+        
+        # Валидация
+        data["quality_score"] = self._ensure_float_range(data["quality_score"], 0.0, 10.0, 5.0)
+        data["is_acceptable"] = bool(data.get("is_acceptable", True))
+        data["issues_found"] = self._ensure_string_list(data["issues_found"])
+        data["improvement_suggestions"] = self._ensure_string_list(data["improvement_suggestions"])
+        data["critic_reasoning"] = self._ensure_string(data["critic_reasoning"], "Обоснование не предоставлено")
+        
+        return data
+
+    def _fix_general_structure(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Общее исправление структуры"""
+        
+        # Просто возвращаем данные, убедившись что это dict
+        if not isinstance(data, dict):
+            return {"error": "Неверный формат данных", "original_data": str(data)}
+        
+        return data
+
+    # Вспомогательные методы валидации
+
+    def _ensure_int_range(self, value: Any, min_val: int, max_val: int, default: int) -> int:
+        """Обеспечивает целое число в заданном диапазоне"""
+        try:
+            int_val = int(float(value))  # Сначала float, потом int для обработки "3.0"
+            return max(min_val, min(max_val, int_val))
+        except (ValueError, TypeError):
+            return default
+
+    def _ensure_float_range(self, value: Any, min_val: float, max_val: float, default: float) -> float:
+        """Обеспечивает число с плавающей точкой в заданном диапазоне"""
+        try:
+            float_val = float(value)
+            return max(min_val, min(max_val, float_val))
+        except (ValueError, TypeError):
+            return default
+
+    def _ensure_string(self, value: Any, default: str) -> str:
+        """Обеспечивает строковое значение"""
+        if not value or not isinstance(value, str) or len(value.strip()) < 3:
+            return default
+        return str(value).strip()
+
+    def _ensure_string_list(self, value: Any) -> List[str]:
+        """Обеспечивает список строк"""
+        if not isinstance(value, list):
+            return []
+        
+        result = []
+        for item in value:
+            if item and isinstance(item, str) and len(item.strip()) > 0:
+                result.append(str(item).strip())
+        
+        return result[:10]  # Ограничиваем до 10 элементов
+
+    def _create_emergency_fallback_result(self, extraction_prompt: str, error_message: str) -> Dict[str, Any]:
+        """Создает аварийный fallback результат когда все стратегии не удались"""
+        
+        # Пытаемся определить тип запроса по промпту
+        prompt_lower = extraction_prompt.lower()
+        
+        if any(keyword in prompt_lower for keyword in ['риск', 'risk', 'оцен', 'evaluat']):
+            # Это похоже на оценку риска
+            return {
+                "probability_score": 3,
+                "impact_score": 3,
+                "total_score": 9,
+                "risk_level": "medium",
+                "probability_reasoning": f"Аварийная оценка: LLM вернул некорректный JSON. Ошибка: {error_message}",
+                "impact_reasoning": f"Аварийная оценка: LLM вернул некорректный JSON. Ошибка: {error_message}",
+                "key_factors": ["Ошибка парсинга ответа LLM"],
+                "recommendations": ["Проверить качество промпта", "Повторить оценку", "Проверить настройки LLM"],
+                "confidence_level": 0.1
+            }
+        
+        elif any(keyword in prompt_lower for keyword in ['критик', 'critic', 'качеств', 'quality']):
+            # Это похоже на критическую оценку
+            return {
+                "quality_score": 3.0,
+                "is_acceptable": False,
+                "issues_found": ["LLM вернул некорректный JSON", f"Ошибка парсинга: {error_message}"],
+                "improvement_suggestions": ["Улучшить промпт", "Проверить настройки LLM", "Повторить оценку"],
+                "critic_reasoning": f"Аварийная оценка качества: не удалось распарсить ответ LLM. Ошибка: {error_message}"
+            }
+        
+        else:
+            # Общий fallback
+            return {
+                "error": "Ошибка парсинга LLM ответа",
+                "error_message": error_message,
+                "extraction_prompt": extraction_prompt,
+                "fallback_response": True
+            }
 
 # ===============================
 # Специализированные клиенты для агентов

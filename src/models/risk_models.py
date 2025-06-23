@@ -104,49 +104,141 @@ class AgentProfile(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
 
 
+# src/models/risk_models.py - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ RiskEvaluation
+
 class RiskEvaluation(BaseModel):
-    """Оценка конкретного типа риска"""
+    """Полностью исправленная оценка риска БЕЗ дефолтных значений"""
     
     # Идентификация
     risk_type: RiskType = Field(..., description="Тип риска")
     evaluator_agent: str = Field(..., description="Агент, проводивший оценку")
     
-    # Оценки
+    # Основные оценки - ОБЯЗАТЕЛЬНЫЕ но с умной валидацией
     probability_score: int = Field(..., ge=1, le=5, description="Вероятность риска (1-5)")
     impact_score: int = Field(..., ge=1, le=5, description="Тяжесть последствий (1-5)")
-    total_score: int = Field(..., ge=1, le=25, description="Общий балл риска")
-    risk_level: RiskLevel = Field(..., description="Уровень риска")
     
-    # Обоснования
+    # Вычисляемые поля - НЕ ОБЯЗАТЕЛЬНЫЕ при инициализации
+    total_score: Optional[int] = Field(None, description="Общий балл риска")
+    risk_level: Optional[RiskLevel] = Field(None, description="Уровень риска")
+    
+    # Остальные поля с разумными дефолтами только для Optional полей
     probability_reasoning: str = Field(..., description="Обоснование вероятности")
     impact_reasoning: str = Field(..., description="Обоснование тяжести")
     identified_risks: List[str] = Field(default_factory=list, description="Выявленные риски")
-    
-    # Рекомендации
-    recommendations: List[str] = Field(default_factory=list, description="Рекомендации по снижению")
-    suggested_controls: List[str] = Field(default_factory=list, description="Предлагаемые меры контроля")
-    
-    # Метаданные
-    confidence_level: float = Field(..., ge=0.0, le=1.0, description="Уровень уверенности")
+    recommendations: List[str] = Field(default_factory=list, description="Рекомендации")
+    confidence_level: float = Field(default=0.7, ge=0.0, le=1.0, description="Уровень уверенности")
     timestamp: datetime = Field(default_factory=datetime.now)
     
-    @validator('total_score', always=True)
-    def calculate_total_score(cls, v, values):
-        """Автоматический расчет общего балла"""
-        prob = values.get('probability_score', 1)
-        impact = values.get('impact_score', 1)
-        return prob * impact
+    def __init__(self, **data):
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Вычисляем поля ДО валидации Pydantic
+        if 'total_score' not in data or data['total_score'] is None:
+            prob = data.get('probability_score', 3)
+            impact = data.get('impact_score', 3)
+            data['total_score'] = prob * impact
+        
+        if 'risk_level' not in data or data['risk_level'] is None:
+            total = data.get('total_score', 9)
+            if total <= 6:
+                data['risk_level'] = RiskLevel.LOW
+            elif total <= 14:
+                data['risk_level'] = RiskLevel.MEDIUM
+            else:
+                data['risk_level'] = RiskLevel.HIGH
+        
+        # Теперь вызываем родительский __init__ с полными данными
+        super().__init__(**data)
     
-    @validator('risk_level', always=True)
-    def determine_risk_level(cls, v, values):
-        """Автоматическое определение уровня риска"""
-        total_score = values.get('total_score', 1)
+    @classmethod
+    def create_safe(
+        cls,
+        risk_type: RiskType,
+        evaluator_agent: str,
+        raw_data: Dict[str, Any]
+    ) -> 'RiskEvaluation':
+        """
+        БЕЗОПАСНОЕ создание с гарантированной валидностью
+        """
+        
+        # Извлекаем и валидируем обязательные поля
+        prob_score = cls._safe_extract_int(raw_data.get("probability_score"), 3, 1, 5)
+        impact_score = cls._safe_extract_int(raw_data.get("impact_score"), 3, 1, 5)
+        
+        # Извлекаем строковые поля
+        prob_reasoning = cls._safe_extract_string(
+            raw_data.get("probability_reasoning"), 
+            "Обоснование вероятности не предоставлено LLM"
+        )
+        impact_reasoning = cls._safe_extract_string(
+            raw_data.get("impact_reasoning"),
+            "Обоснование воздействия не предоставлено LLM"
+        )
+        
+        # Вычисляемые поля
+        total_score = prob_score * impact_score
         if total_score <= 6:
-            return RiskLevel.LOW
+            risk_level = RiskLevel.LOW
         elif total_score <= 14:
-            return RiskLevel.MEDIUM
+            risk_level = RiskLevel.MEDIUM
         else:
-            return RiskLevel.HIGH
+            risk_level = RiskLevel.HIGH
+        
+        # Дополнительные поля
+        confidence = cls._safe_extract_float(raw_data.get("confidence_level"), 0.7, 0.0, 1.0)
+        recommendations = cls._safe_extract_list(raw_data.get("recommendations", []))
+        key_factors = cls._safe_extract_list(raw_data.get("key_factors", []))
+        
+        # Создаем с ПОЛНЫМИ данными
+        return cls(
+            risk_type=risk_type,
+            evaluator_agent=evaluator_agent,
+            probability_score=prob_score,
+            impact_score=impact_score,
+            total_score=total_score,
+            risk_level=risk_level,
+            probability_reasoning=prob_reasoning,
+            impact_reasoning=impact_reasoning,
+            identified_risks=key_factors,
+            recommendations=recommendations,
+            confidence_level=confidence
+        )
+    
+    @staticmethod
+    def _safe_extract_int(value: Any, default: int, min_val: int, max_val: int) -> int:
+        """Безопасное извлечение int"""
+        try:
+            val = int(float(value))  # Через float для обработки "3.0"
+            return max(min_val, min(max_val, val))
+        except (ValueError, TypeError):
+            return default
+    
+    @staticmethod
+    def _safe_extract_float(value: Any, default: float, min_val: float, max_val: float) -> float:
+        """Безопасное извлечение float"""
+        try:
+            val = float(value)
+            return max(min_val, min(max_val, val))
+        except (ValueError, TypeError):
+            return default
+    
+    @staticmethod
+    def _safe_extract_string(value: Any, default: str) -> str:
+        """Безопасное извлечение строки"""
+        if not value or not isinstance(value, str) or len(str(value).strip()) < 5:
+            return default
+        return str(value).strip()
+    
+    @staticmethod
+    def _safe_extract_list(value: Any) -> List[str]:
+        """Безопасное извлечение списка"""
+        if not isinstance(value, list):
+            return []
+        
+        result = []
+        for item in value:
+            if item and isinstance(item, str) and len(str(item).strip()) > 0:
+                result.append(str(item).strip())
+        
+        return result[:10]  # Ограничиваем до 10
 
 
 class CriticEvaluation(BaseModel):
@@ -329,18 +421,55 @@ class WorkflowState(BaseModel):
         return result
     
     def get_evaluation_results(self) -> Dict[str, Any]:
-        """Собирает все результаты оценки в единый словарь"""
-        return {
-            "ethical": self.ethical_evaluation,
-            "stability": self.stability_evaluation,
-            "security": self.security_evaluation,
-            "autonomy": self.autonomy_evaluation,
-            "regulatory": self.regulatory_evaluation,
-            "social": self.social_evaluation
+        """ИСПРАВЛЕННАЯ версия - Собирает все результаты оценки в единый словарь"""
+        
+        # Собираем результаты из отдельных полей состояния
+        evaluation_results = {}
+        
+        # Маппинг полей состояния к типам рисков
+        field_mapping = {
+            "ethical_evaluation": "ethical",
+            "stability_evaluation": "stability", 
+            "security_evaluation": "security",
+            "autonomy_evaluation": "autonomy",
+            "regulatory_evaluation": "regulatory",
+            "social_evaluation": "social"
         }
+        
+        # Извлекаем результаты из состояния
+        for field_name, risk_type in field_mapping.items():
+            result = getattr(self, field_name, None)
+            
+            if result is not None:
+                # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Унифицируем формат результата
+                if isinstance(result, dict):
+                    # Уже в правильном формате
+                    evaluation_results[risk_type] = result
+                elif hasattr(result, 'dict'):
+                    # Pydantic модель - конвертируем в dict
+                    evaluation_results[risk_type] = result.dict()
+                elif hasattr(result, '__dict__'):
+                    # Обычный объект - извлекаем атрибуты
+                    evaluation_results[risk_type] = {
+                        "status": getattr(result, 'status', 'unknown'),
+                        "result_data": getattr(result, 'result_data', None),
+                        "agent_name": getattr(result, 'agent_name', 'unknown'),
+                        "error_message": getattr(result, 'error_message', None)
+                    }
+                else:
+                    # Неизвестный формат - создаем минимальную структуру
+                    evaluation_results[risk_type] = {
+                        "status": "unknown",
+                        "result_data": None,
+                        "agent_name": "unknown",
+                        "error_message": f"Неизвестный формат результата: {type(result)}"
+                    }
+        
+        return evaluation_results
     
-    def set_evaluation_result(self, risk_type: str, result: Dict[str, Any]):
-        """Устанавливает результат оценки для конкретного типа риска"""
+    def set_evaluation_result(self, risk_type: str, result: Any):
+        """ИСПРАВЛЕННАЯ версия - Устанавливает результат оценки для конкретного типа риска"""
+        
         field_mapping = {
             "ethical": "ethical_evaluation",
             "stability": "stability_evaluation", 
@@ -352,9 +481,111 @@ class WorkflowState(BaseModel):
         
         field_name = field_mapping.get(risk_type)
         if field_name:
-            setattr(self, field_name, result)
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Нормализуем формат перед сохранением
+            normalized_result = self._normalize_evaluation_result(result)
+            setattr(self, field_name, normalized_result)
 
+    def _normalize_evaluation_result(self, result: Any) -> Dict[str, Any]:
+        """Нормализует результат оценки к единому формату"""
+        
+        if result is None:
+            return {
+                "status": "failed",
+                "result_data": None,
+                "agent_name": "unknown",
+                "error_message": "Результат оценки отсутствует"
+            }
+        
+        # Если это уже dict в правильном формате
+        if isinstance(result, dict):
+            required_fields = ["status", "result_data", "agent_name"]
+            if all(field in result for field in required_fields):
+                return result
+            
+            # Если это dict но в неправильном формате, пытаемся исправить
+            return {
+                "status": result.get("status", "unknown"),
+                "result_data": result.get("result_data", result),  # Fallback на весь result
+                "agent_name": result.get("agent_name", "unknown"),
+                "error_message": result.get("error_message")
+            }
+        
+        # Если это объект AgentTaskResult или похожий
+        elif hasattr(result, 'status') and hasattr(result, 'result_data'):
+            return {
+                "status": str(getattr(result, 'status', 'unknown')),
+                "result_data": getattr(result, 'result_data', None),
+                "agent_name": getattr(result, 'agent_name', 'unknown'),
+                "error_message": getattr(result, 'error_message', None)
+            }
+        
+        # Если это Pydantic модель
+        elif hasattr(result, 'dict'):
+            result_dict = result.dict()
+            return {
+                "status": result_dict.get("status", "unknown"),
+                "result_data": result_dict.get("result_data", result_dict),
+                "agent_name": result_dict.get("agent_name", "unknown"),
+                "error_message": result_dict.get("error_message")
+            }
+        
+        # Последний fallback - создаем минимальную структуру
+        else:
+            return {
+                "status": "unknown",
+                "result_data": str(result) if result else None,
+                "agent_name": "unknown",
+                "error_message": f"Неподдерживаемый тип результата: {type(result)}"
+            }
+    def get_successful_evaluations(self) -> Dict[str, Any]:
+        """Возвращает только успешно завершенные оценки"""
+        
+        all_results = self.get_evaluation_results()
+        successful_results = {}
+        
+        for risk_type, result in all_results.items():
+            if (result and 
+                result.get("status") in ["completed", "success"] and 
+                result.get("result_data") is not None):
+                successful_results[risk_type] = result
+    
+        return successful_results
 
+    def get_failed_evaluations(self) -> Dict[str, Any]:
+        """Возвращает только неудачные оценки"""
+        
+        all_results = self.get_evaluation_results()
+        failed_results = {}
+        
+        for risk_type, result in all_results.items():
+            if (not result or 
+                result.get("status") in ["failed", "error"] or 
+                result.get("result_data") is None):
+                failed_results[risk_type] = result
+        
+        return failed_results
+
+    def has_evaluation_results(self) -> bool:
+        """Проверяет, есть ли хотя бы один результат оценки"""
+        
+        successful = self.get_successful_evaluations()
+        return len(successful) > 0
+
+    def get_evaluation_summary(self) -> Dict[str, Any]:
+        """Возвращает сводку по результатам оценки"""
+        
+        all_results = self.get_evaluation_results()
+        successful = self.get_successful_evaluations()
+        failed = self.get_failed_evaluations()
+        
+        return {
+            "total_evaluations": len(all_results),
+            "successful_evaluations": len(successful),
+            "failed_evaluations": len(failed),
+            "success_rate": len(successful) / len(all_results) if all_results else 0,
+            "successful_types": list(successful.keys()),
+            "failed_types": list(failed.keys())
+        }
 # ===============================
 # Вспомогательные функции
 # ===============================

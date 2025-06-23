@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import re
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
@@ -479,72 +480,98 @@ class EvaluationAgent(BaseAgent):
             "risk_level", "probability_reasoning", "impact_reasoning"
         ]
     def _parse_llm_response(self, response_content: str) -> Dict[str, Any]:
-        """Парсинг ответа LLM с извлечением JSON - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        """ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ парсинг ответа LLM с максимальной надежностью"""
+        
         try:
+            # Шаг 1: Очистка контента
+            cleaned_content = response_content.strip()
+            
             # Удаляем теги <think>...</think> если есть
-            cleaned_content = response_content
-            if '<think>' in cleaned_content and '</think>' in cleaned_content:
-                start = cleaned_content.find('</think>') + 8
-                cleaned_content = cleaned_content[start:].strip()
+            import re
+            cleaned_content = re.sub(r'<think>.*?</think>', '', cleaned_content, flags=re.DOTALL)
+            cleaned_content = cleaned_content.strip()
             
-            # Ищем JSON блок в ответе
-            json_content = None
-            
+            # Удаляем markdown блоки
             if "```json" in cleaned_content:
-                start = cleaned_content.find("```json") + 7
-                end = cleaned_content.find("```", start)
-                if end != -1:
-                    json_content = cleaned_content[start:end].strip()
+                # Находим все JSON блоки
+                json_blocks = re.findall(r'```json\s*(.*?)\s*```', cleaned_content, re.DOTALL)
+                if json_blocks:
+                    json_content = json_blocks[-1].strip()  # Берем последний блок
                 else:
+                    # Если не найден закрывающий тег, берем все после ```json
+                    start = cleaned_content.find("```json") + 7
                     json_content = cleaned_content[start:].strip()
             else:
-                # Пытаемся найти JSON по фигурным скобкам
-                start = cleaned_content.find("{")
-                end = cleaned_content.rfind("}")
-                if start != -1 and end != -1 and end > start:
-                    json_content = cleaned_content[start:end+1]
+                # Ищем JSON по фигурным скобкам
+                json_match = re.search(r'\{.*\}', cleaned_content, re.DOTALL)
+                if json_match:
+                    json_content = json_match.group().strip()
                 else:
-                    json_content = cleaned_content.strip()
+                    json_content = cleaned_content
             
-            # Пытаемся парсить JSON
-            parsed_data = json.loads(json_content)
+            # Шаг 2: Дополнительная очистка JSON
+            # Убираем потенциальные концевые символы после }
+            if '}' in json_content:
+                end_pos = json_content.rfind('}')
+                json_content = json_content[:end_pos + 1]
             
-            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем и дополняем обязательные поля
+            # Шаг 3: Пытаемся парсить JSON
+            try:
+                parsed_data = json.loads(json_content)
+            except json.JSONDecodeError:
+                # Пытаемся починить распространенные ошибки JSON
+                json_content = self._fix_common_json_errors(json_content)
+                parsed_data = json.loads(json_content)
+            
+            # Шаг 4: КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ - всегда обеспечиваем обязательные поля
             parsed_data = self._ensure_required_fields(parsed_data)
             
             return parsed_data
             
-        except json.JSONDecodeError as e:
-            # Если парсинг не удался, возвращаем безопасные дефолтные данные
-            self.logger.bind_context("unknown", self.name).warning(
-                f"⚠️ Ошибка парсинга JSON, используем дефолтные значения: {e}"
-            )
-            return self._get_default_evaluation_data(f"Ошибка парсинга JSON: {str(e)}")
-        
         except Exception as e:
-            # Любая другая ошибка
-            self.logger.bind_context("unknown", self.name).error(
-                f"❌ Неожиданная ошибка при парсинге ответа LLM: {e}"
+            # Если ничего не помогло, возвращаем безопасные дефолтные данные
+            self.logger.bind_context("unknown", self.name).warning(
+                f"⚠️ Критическая ошибка парсинга LLM ответа, используем fallback: {e}"
             )
-            return self._get_default_evaluation_data(f"Неожиданная ошибка: {str(e)}")
+            self.logger.bind_context("unknown", self.name).debug(
+                f"Проблемный контент: {response_content[:200]}..."
+            )
+            return self._get_default_evaluation_data(f"Критическая ошибка парсинга: {str(e)}")
+
+    def _fix_common_json_errors(self, json_content: str) -> str:
+        """Исправляет распространенные ошибки в JSON от LLM"""
+        
+        # Убираем trailing commas
+        json_content = re.sub(r',\s*}', '}', json_content)
+        json_content = re.sub(r',\s*]', ']', json_content)
+        
+        # Исправляем неэкранированные кавычки в строках
+        # Это простое исправление, может потребовать доработки
+        json_content = re.sub(r'(?<!\\)"(?=[^,}\]]*[,}\]])', '\\"', json_content)
+        
+        # Убираем комментарии в JSON (если есть)
+        json_content = re.sub(r'//.*?\n', '\n', json_content)
+        json_content = re.sub(r'/\*.*?\*/', '', json_content, flags=re.DOTALL)
+        
+        return json_content
 
     def _ensure_required_fields(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Обеспечивает наличие всех обязательных полей с валидными значениями"""
+        """УЛУЧШЕННАЯ версия обеспечения обязательных полей"""
         
-        # Определяем обязательные поля с дефолтными значениями
+        # Шаг 1: Определяем обязательные поля с умными дефолтами
         required_fields = {
             "probability_score": 3,
             "impact_score": 3, 
             "total_score": 9,
             "risk_level": "medium",
-            "probability_reasoning": "Автоматически сгенерированное обоснование вероятности",
-            "impact_reasoning": "Автоматически сгенерированное обоснование воздействия",
+            "probability_reasoning": "Обоснование вероятности не предоставлено LLM",
+            "impact_reasoning": "Обоснование воздействия не предоставлено LLM",
             "key_factors": [],
             "recommendations": [],
             "confidence_level": 0.7
         }
         
-        # Добавляем отсутствующие поля
+        # Шаг 2: Добавляем отсутствующие поля
         for field, default_value in required_fields.items():
             if field not in parsed_data or parsed_data[field] is None:
                 parsed_data[field] = default_value
@@ -552,26 +579,11 @@ class EvaluationAgent(BaseAgent):
                     f"🔧 Добавлено отсутствующее поле {field}: {default_value}"
                 )
         
-        # Валидируем и исправляем числовые поля
-        parsed_data = self._validate_numeric_fields(parsed_data)
+        # Шаг 3: Валидируем и исправляем типы данных
+        parsed_data = self._validate_and_fix_field_types(parsed_data)
         
-        # Валидируем и исправляем строковые поля
-        parsed_data = self._validate_string_fields(parsed_data)
-        
-        # Валидируем и исправляем списковые поля
-        parsed_data = self._validate_list_fields(parsed_data)
-        
-        # Пересчитываем зависимые поля
-        parsed_data["total_score"] = parsed_data["probability_score"] * parsed_data["impact_score"]
-        
-        # Определяем risk_level на основе total_score
-        total_score = parsed_data["total_score"]
-        if total_score <= 6:
-            parsed_data["risk_level"] = "low"
-        elif total_score <= 14:
-            parsed_data["risk_level"] = "medium"
-        else:
-            parsed_data["risk_level"] = "high"
+        # Шаг 4: Валидируем бизнес-логику
+        parsed_data = self._validate_business_logic(parsed_data)
         
         return parsed_data
 
@@ -640,19 +652,92 @@ class EvaluationAgent(BaseAgent):
             data[field] = data[field][:10]
         
         return data
+    
+    def _validate_and_fix_field_types(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Валидирует и исправляет типы полей"""
+        
+        # Числовые поля (1-5)
+        score_fields = ["probability_score", "impact_score"]
+        for field in score_fields:
+            try:
+                value = int(data[field])
+                data[field] = max(1, min(5, value))  # Ограничиваем диапазон 1-5
+            except (ValueError, TypeError):
+                data[field] = 3  # Средний балл
+                self.logger.bind_context("unknown", self.name).warning(
+                    f"🔧 Исправлен некорректный {field}: установлено значение 3"
+                )
+        
+        # Confidence level (0.0-1.0)
+        try:
+            value = float(data["confidence_level"])
+            data["confidence_level"] = max(0.0, min(1.0, value))
+        except (ValueError, TypeError):
+            data["confidence_level"] = 0.7
+        
+        # Risk level (enum)
+        valid_levels = ["low", "medium", "high"]
+        if data.get("risk_level") not in valid_levels:
+            data["risk_level"] = "medium"
+            self.logger.bind_context("unknown", self.name).warning(
+                "🔧 Исправлен некорректный risk_level: установлено 'medium'"
+            )
+        
+        # Строковые поля
+        string_fields = ["probability_reasoning", "impact_reasoning"]
+        for field in string_fields:
+            if not isinstance(data.get(field), str) or len(str(data[field]).strip()) < 5:
+                data[field] = f"Автоматически сгенерированное обоснование для {field}"
+        
+        # Списковые поля
+        list_fields = ["key_factors", "recommendations"]
+        for field in list_fields:
+            if not isinstance(data.get(field), list):
+                data[field] = []
+            else:
+                # Очищаем список от пустых элементов
+                data[field] = [
+                    str(item).strip() for item in data[field] 
+                    if item and str(item).strip()
+                ][:10]  # Ограничиваем до 10 элементов
+        
+        return data
 
+    def _validate_business_logic(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Валидирует бизнес-логику оценки риска"""
+        
+        # Пересчитываем total_score для консистентности
+        data["total_score"] = data["probability_score"] * data["impact_score"]
+        
+        # Корректируем risk_level на основе total_score
+        total_score = data["total_score"]
+        if total_score <= 6:
+            correct_level = "low"
+        elif total_score <= 14:
+            correct_level = "medium"
+        else:
+            correct_level = "high"
+        
+        if data["risk_level"] != correct_level:
+            old_level = data["risk_level"]
+            data["risk_level"] = correct_level
+            self.logger.bind_context("unknown", self.name).debug(
+                f"🔧 Скорректирован risk_level: {old_level} → {correct_level} (total_score: {total_score})"
+            )
+        
+        return data
     def _get_default_evaluation_data(self, error_message: str) -> Dict[str, Any]:
-        """Возвращает безопасные дефолтные данные для оценки"""
+        """УЛУЧШЕННЫЕ безопасные дефолтные данные для оценки"""
         return {
             "probability_score": 3,
             "impact_score": 3,
             "total_score": 9,
             "risk_level": "medium",
-            "probability_reasoning": f"Не удалось получить обоснование от LLM. Ошибка: {error_message}",
-            "impact_reasoning": "Использованы дефолтные значения из-за ошибки парсинга",
-            "key_factors": ["Ошибка получения данных от LLM"],
-            "recommendations": ["Проверить промпт и формат ответа", "Повторить оценку"],
-            "confidence_level": 0.3
+            "probability_reasoning": f"LLM не смог предоставить обоснование. Ошибка: {error_message}",
+            "impact_reasoning": f"LLM не смог предоставить обоснование. Ошибка: {error_message}",
+            "key_factors": ["Недостаточно данных для анализа"],
+            "recommendations": ["Провести дополнительный анализ", "Улучшить качество входных данных"],
+            "confidence_level": 0.3  # Низкая уверенность для fallback данных
         }
 
 # ===============================
