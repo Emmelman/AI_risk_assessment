@@ -1014,55 +1014,7 @@ def create_safe_evaluator_process_method(risk_type: RiskType, risk_description: 
         
         return safe_process
 
-def create_evaluator_nodes_for_langgraph(
-    evaluators: Dict[RiskType, EvaluationAgent]
-) -> Dict[str, callable]:
-    """
-    Создание функций узлов для LangGraph workflow
-    
-    Args:
-        evaluators: Словарь агентов-оценщиков
-        
-    Returns:
-        Словарь функций узлов для LangGraph
-    """
-    
-    def create_evaluator_node(risk_type: RiskType, evaluator: EvaluationAgent):
-        """Создание функции узла для конкретного агента-оценщика"""
-        
-        async def evaluator_node(state: Dict[str, Any]) -> Dict[str, Any]:
-            """Узел агента-оценщика в LangGraph workflow"""
-            
-            assessment_id = state.get("assessment_id", "unknown")
-            agent_profile = state.get("agent_profile", {})
-            
-            # Подготавливаем входные данные
-            input_data = {"agent_profile": agent_profile}
-            
-            # Запускаем агента-оценщика
-            result = await evaluator.run(input_data, assessment_id)
-            
-            # Обновляем состояние
-            updated_state = state.copy()
-            
-            # Инициализируем evaluation_results если его нет
-            if "evaluation_results" not in updated_state:
-                updated_state["evaluation_results"] = {}
-            
-            # Добавляем результат оценки
-            updated_state["evaluation_results"][risk_type] = result
-            
-            return updated_state
-        
-        return evaluator_node
-    
-    # Создаем узлы для всех агентов
-    nodes = {}
-    for risk_type, evaluator in evaluators.items():
-        node_name = f"{risk_type.value}_evaluator_node"
-        nodes[node_name] = create_evaluator_node(risk_type, evaluator)
-    
-    return nodes
+
 
 
 def create_evaluators_from_env() -> Dict[RiskType, EvaluationAgent]:
