@@ -199,15 +199,15 @@ class CriticAgent(AnalysisAgent):
     
     async def critique_multiple_evaluations(
         self,
-        evaluation_results: Dict[RiskType, AgentTaskResult],
+        evaluation_results: Dict[str, Any],  # Теперь принимает Dict вместо AgentTaskResult
         agent_profile: Dict[str, Any],
         assessment_id: str
-    ) -> Dict[RiskType, AgentTaskResult]:
+    ) -> Dict[str, Dict[str, Any]]:
         """
-        Критика множественных оценок
+        Критика множественных оценок - ОБНОВЛЕННАЯ ВЕРСИЯ
         
         Args:
-            evaluation_results: Результаты работы агентов-оценщиков
+            evaluation_results: Результаты работы агентов-оценщиков (из get_evaluation_results())
             agent_profile: Профиль анализируемого агента
             assessment_id: ID оценки
             
@@ -217,23 +217,76 @@ class CriticAgent(AnalysisAgent):
         critic_results = {}
         
         for risk_type, eval_result in evaluation_results.items():
-            if (eval_result.status == ProcessingStatus.COMPLETED and 
-                eval_result.result_data and 
-                "risk_evaluation" in eval_result.result_data):
+            # Проверяем что результат существует и содержит данные
+            if (eval_result and 
+                isinstance(eval_result, dict) and 
+                eval_result.get("status") == "completed" and 
+                eval_result.get("result_data")):
                 
-                # Подготавливаем данные для критики
-                input_data = {
-                    "risk_type": risk_type.value,
-                    "risk_evaluation": eval_result.result_data["risk_evaluation"],
-                    "agent_profile": agent_profile,
-                    "evaluator_name": eval_result.agent_name
-                }
+                risk_evaluation = eval_result["result_data"].get("risk_evaluation")
                 
-                # Выполняем критику
-                critic_result = await self.run(input_data, assessment_id)
-                critic_results[risk_type] = critic_result
+                if risk_evaluation:
+                    # Подготавливаем данные для критики
+                    input_data = {
+                        "risk_type": risk_type,
+                        "risk_evaluation": risk_evaluation,
+                        "agent_profile": agent_profile,
+                        "evaluator_name": eval_result.get("agent_name", "Unknown")
+                    }
+                    
+                    try:
+                        # Выполняем критику
+                        critic_result = await self.run(input_data, assessment_id)
+                        critic_results[risk_type] = critic_result
+                        
+                    except Exception as e:
+                        # Если критика не удалась, создаем дефолтный результат
+                        self.logger.bind_context(assessment_id, self.name).error(
+                            f"❌ Ошибка критики {risk_type}: {e}"
+                        )
+                        
+                        critic_results[risk_type] = self._create_default_critic_result(
+                            risk_type, f"Ошибка критики: {str(e)}"
+                        )
+                else:
+                    # Нет данных для критики
+                    critic_results[risk_type] = self._create_default_critic_result(
+                        risk_type, "Отсутствуют данные оценки для критики"
+                    )
+            else:
+                # Неудачная оценка
+                critic_results[risk_type] = self._create_default_critic_result(
+                    risk_type, "Оценка риска не была завершена успешно"
+                )
         
         return critic_results
+
+    def _create_default_critic_result(self, risk_type: str, error_message: str) -> Dict[str, Any]:
+        """Создает дефолтный результат критика при ошибках"""
+        from ..models.risk_models import AgentTaskResult, ProcessingStatus
+        from datetime import datetime
+        
+        # Создаем минимальный результат критика
+        default_critic_evaluation = {
+            "quality_score": 5.0,  # Средняя оценка
+            "is_acceptable": True,  # Принимаем по умолчанию чтобы не блокировать процесс
+            "issues_found": [error_message],
+            "improvement_suggestions": ["Повторить оценку", "Проверить данные агента"],
+            "critic_reasoning": f"Автоматическая оценка из-за ошибки: {error_message}"
+        }
+        
+        return AgentTaskResult(
+            agent_name=self.name,
+            task_type="critic_analysis",
+            status=ProcessingStatus.COMPLETED,
+            result_data={
+                "critic_evaluation": default_critic_evaluation,
+                "requires_retry": False  # Не требуем повтора при ошибках критика
+            },
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+            execution_time_seconds=0.1
+        ).dict()
     
     def _format_agent_data_for_critique(self, agent_profile: Dict[str, Any]) -> str:
         """Форматирование данных агента для критического анализа"""

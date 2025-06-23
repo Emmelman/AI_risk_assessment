@@ -9,9 +9,10 @@ from datetime import datetime
 
 from .base_agent import EvaluationAgent, AgentConfig
 from ..models.risk_models import (
-    RiskType, RiskEvaluation, AgentTaskResult, ProcessingStatus
+    RiskType, RiskEvaluation, AgentTaskResult, ProcessingStatus, WorkflowState
 )
 from ..utils.logger import LogContext
+
 
 
 class EthicalRiskEvaluator(EvaluationAgent):
@@ -1028,9 +1029,10 @@ __all__ = [
     "RegulatoryRiskEvaluator",
     "SocialRiskEvaluator",
     
-    # Фабрики
+   # Фабрики
     "create_all_evaluator_agents",
-    "create_evaluator_nodes_for_langgraph",
+    "create_evaluator_nodes_for_langgraph_safe",  # ← ДОБАВИТЬ ЭТУ СТРОКУ
+    "create_critic_node_function_fixed",         # ← И ЭТУ
     "create_evaluators_from_env",
     
     # Утилиты
@@ -1043,14 +1045,13 @@ __all__ = [
 # ИСПРАВЛЕННЫЕ ФУНКЦИИ ДЛЯ LANGGRAPH
 # ===============================
 
-def create_evaluator_nodes_for_langgraph_fixed(evaluators: Dict[RiskType, Any]) -> Dict[str, callable]:
-    """Создание узлов для LangGraph с исправлением типов данных"""
+def create_evaluator_nodes_for_langgraph_safe(evaluators: Dict[RiskType, Any]) -> Dict[str, callable]:
+    """Создание безопасных узлов для LangGraph без concurrent updates"""
     
-    def create_evaluator_node(risk_type: RiskType, evaluator):
-        async def evaluator_node(state: Dict[str, Any]) -> Dict[str, Any]:
-            """Узел оценщика в LangGraph workflow"""
+    def create_safe_evaluator_node(risk_type: RiskType, evaluator):
+        async def safe_evaluator_node(state: WorkflowState) -> Dict[str, Any]:
+            """Безопасный узел оценщика - обновляет только свое поле"""
             
-            # Извлекаем данные из состояния
             assessment_id = state.get("assessment_id", "unknown")
             agent_profile = state.get("agent_profile", {})
             
@@ -1060,64 +1061,68 @@ def create_evaluator_nodes_for_langgraph_fixed(evaluators: Dict[RiskType, Any]) 
             # Запускаем оценщика
             result = await evaluator.run(input_data, assessment_id)
             
-            # Обновляем состояние - преобразуем AgentTaskResult в словарь
-            updated_state = state.copy()
+            # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: каждый агент обновляет только свое поле
+            field_mapping = {
+                RiskType.ETHICAL: "ethical_evaluation",
+                RiskType.STABILITY: "stability_evaluation",
+                RiskType.SECURITY: "security_evaluation", 
+                RiskType.AUTONOMY: "autonomy_evaluation",
+                RiskType.REGULATORY: "regulatory_evaluation",
+                RiskType.SOCIAL: "social_evaluation"
+            }
             
-            # Сохраняем результат как словарь
-            if "evaluation_results" not in updated_state:
-                updated_state["evaluation_results"] = {}
+            field_name = field_mapping[risk_type]
             
-            updated_state["evaluation_results"][risk_type.value] = result.dict()
-            
-            return updated_state
+            # Возвращаем только одно обновление поля
+            return {field_name: result.dict()}
         
-        return evaluator_node
+        return safe_evaluator_node
     
     # Создаем узлы для всех оценщиков
     nodes = {}
     for risk_type, evaluator in evaluators.items():
         node_name = f"{risk_type.value}_evaluator_node"
-        nodes[node_name] = create_evaluator_node(risk_type, evaluator)
+        nodes[node_name] = create_safe_evaluator_node(risk_type, evaluator)
     
     return nodes
-
 
 def create_critic_node_function_fixed(critic_agent):
     """Создает исправленную функцию узла критика для LangGraph"""
     
-    async def critic_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        """Узел критика в LangGraph workflow"""
+    async def critic_node(state: WorkflowState) -> Dict[str, Any]:
+        """Узел критика в LangGraph workflow - ОБНОВЛЕННАЯ ВЕРСИЯ"""
         
         assessment_id = state.get("assessment_id", "unknown")
-        evaluation_results = state.get("evaluation_results", {})
         agent_profile = state.get("agent_profile", {})
         
-        # Обновляем состояние
-        updated_state = state.copy()
+        # Получаем результаты оценки из нового формата состояния
+        evaluation_results = state.get_evaluation_results()
         
-        if "critic_results" not in updated_state:
-            updated_state["critic_results"] = {}
+        # Проверяем что есть результаты для критики
+        valid_results = {k: v for k, v in evaluation_results.items() if v is not None}
         
-        # Анализируем каждую оценку риска
-        for risk_type, eval_result in evaluation_results.items():
-            if isinstance(eval_result, dict) and eval_result.get("result_data"):
-                risk_evaluation = eval_result["result_data"].get("risk_evaluation")
-                
-                if risk_evaluation:
-                    # Подготавливаем данные для критика
-                    critic_input = {
-                        "risk_type": risk_type,
-                        "risk_evaluation": risk_evaluation,
-                        "agent_profile": agent_profile,
-                        "evaluator_name": eval_result.get("agent_name", "Unknown")
-                    }
-                    
-                    # Запускаем критика
-                    critic_result = await critic_agent.run(critic_input, assessment_id)
-                    
-                    # Сохраняем результат как словарь
-                    updated_state["critic_results"][risk_type] = critic_result.dict()
+        if not valid_results:
+            critic_agent.logger.bind_context(assessment_id, "critic").warning(
+                "⚠️ Нет результатов оценки для критики"
+            )
+            return {"critic_results": {}}
         
-        return updated_state
+        try:
+            # Выполняем критику всех доступных оценок
+            critic_results = await critic_agent.critique_multiple_evaluations(
+                evaluation_results=valid_results,
+                agent_profile=agent_profile,
+                assessment_id=assessment_id
+            )
+            
+            return {"critic_results": critic_results}
+            
+        except Exception as e:
+            critic_agent.logger.bind_context(assessment_id, "critic").error(
+                f"❌ Критическая ошибка в узле критика: {e}"
+            )
+            
+            # Возвращаем пустые результаты чтобы не блокировать workflow
+            return {"critic_results": {}}
     
     return critic_node

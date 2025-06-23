@@ -229,7 +229,7 @@ class WorkflowState(BaseModel):
     """Состояние workflow для LangGraph - с поддержкой словарных методов"""
     
     # Идентификаторы
-    assessment_id: Annotated[Optional[str], "assessment_id"] = Field(None, description="ID оценки")
+    assessment_id: Optional[str] = Field(None, description="ID оценки")
     preliminary_agent_name: Optional[str] = Field(None, description="Предварительное имя агента")
     
     # Входные данные
@@ -238,14 +238,22 @@ class WorkflowState(BaseModel):
     
     # Промежуточные результаты
     profiling_result: Optional[Dict[str, Any]] = Field(None, description="Результат профилирования")
-    evaluation_results: Annotated[Dict[str, Dict[str, Any]], "evaluation_results"] = Field(default_factory=dict, description="Результаты оценки рисков")
+    
+    # ИСПРАВЛЕНИЕ: Отдельные поля для каждого типа риска вместо общего словаря
+    ethical_evaluation: Optional[Dict[str, Any]] = Field(None, description="Оценка этических рисков")
+    stability_evaluation: Optional[Dict[str, Any]] = Field(None, description="Оценка рисков стабильности")
+    security_evaluation: Optional[Dict[str, Any]] = Field(None, description="Оценка рисков безопасности")
+    autonomy_evaluation: Optional[Dict[str, Any]] = Field(None, description="Оценка рисков автономности")
+    regulatory_evaluation: Optional[Dict[str, Any]] = Field(None, description="Оценка регуляторных рисков")
+    social_evaluation: Optional[Dict[str, Any]] = Field(None, description="Оценка социальных рисков")
+    
     critic_results: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Результаты критического анализа")
     
     # Итоговый результат
     final_assessment: Optional[Dict[str, Any]] = Field(None, description="Итоговая оценка")
     
     # Управление процессом
-    current_step: Annotated[str, "current_step"] = Field("initialization", description="Текущий шаг")
+    current_step: str = Field("initialization", description="Текущий шаг")
     retry_count: Dict[str, int] = Field(default_factory=dict, description="Счетчики повторов")
     max_retries: int = Field(3, description="Максимум повторов")
     
@@ -285,7 +293,7 @@ class WorkflowState(BaseModel):
 
     class Config:
         """Конфигурация модели"""
-        extra = "allow"  # Разрешаем дополнительные поля
+        extra = "allow"
         use_enum_values = True
         arbitrary_types_allowed = True
         
@@ -319,6 +327,32 @@ class WorkflowState(BaseModel):
                     result[key] = value
         
         return result
+    
+    def get_evaluation_results(self) -> Dict[str, Any]:
+        """Собирает все результаты оценки в единый словарь"""
+        return {
+            "ethical": self.ethical_evaluation,
+            "stability": self.stability_evaluation,
+            "security": self.security_evaluation,
+            "autonomy": self.autonomy_evaluation,
+            "regulatory": self.regulatory_evaluation,
+            "social": self.social_evaluation
+        }
+    
+    def set_evaluation_result(self, risk_type: str, result: Dict[str, Any]):
+        """Устанавливает результат оценки для конкретного типа риска"""
+        field_mapping = {
+            "ethical": "ethical_evaluation",
+            "stability": "stability_evaluation", 
+            "security": "security_evaluation",
+            "autonomy": "autonomy_evaluation",
+            "regulatory": "regulatory_evaluation",
+            "social": "social_evaluation"
+        }
+        
+        field_name = field_mapping.get(risk_type)
+        if field_name:
+            setattr(self, field_name, result)
 
 
 # ===============================

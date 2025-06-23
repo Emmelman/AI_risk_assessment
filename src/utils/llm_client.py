@@ -272,63 +272,73 @@ class LLMClient:
         model: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Извлечение структурированных данных с валидацией
-        
-        Args:
-            data_to_analyze: Данные для анализа
-            extraction_prompt: Промпт для извлечения
-            expected_format: Ожидаемый формат (JSON)
-            model: Модель для использования
+        Извлечение структурированных данных с улучшенной валидацией
         """
         
         system_prompt = f"""Ты - эксперт по извлечению структурированных данных.
         
-Твоя задача: {extraction_prompt}
+        Твоя задача: {extraction_prompt}
 
-ВАЖНО:
-- Отвечай ТОЛЬКО в формате {expected_format}
-- Не добавляй пояснений или комментариев
-- Если данных недостаточно, используй null для отсутствующих полей
-- Строго следуй указанной структуре"""
+        КРИТИЧЕСКИ ВАЖНО:
+        - Отвечай ТОЛЬКО валидным {expected_format}
+        - НЕ добавляй никаких комментариев, пояснений или тегов <think>
+        - Если данных недостаточно, используй разумные дефолтные значения
+        - Строго следуй указанной структуре
+        - Все числовые поля должны быть числами, не строками
+        - Все обязательные поля должны присутствовать
 
-        response = await self.analyze_with_prompt(
-            system_prompt=system_prompt,
-            user_input=f"Данные для анализа:\n{data_to_analyze}",
-            model=model,
-            temperature=0.1  # Низкая температура для точности
-        )
-        
-        # Попытка парсинга JSON
-        try:
-            return json.loads(response.content.strip())
-        except json.JSONDecodeError as e:
-            # Пробуем очистить ответ от лишних символов и тегов
-            cleaned_content = response.content.strip()
-            
-            # Удаляем теги <think>...</think>
-            if '<think>' in cleaned_content and '</think>' in cleaned_content:
-                start = cleaned_content.find('</think>') + 8
-                cleaned_content = cleaned_content[start:].strip()
-            
-            # Удаляем markdown блоки
-            if cleaned_content.startswith("```json"):
-                cleaned_content = cleaned_content[7:]
-            if cleaned_content.endswith("```"):
-                cleaned_content = cleaned_content[:-3]
-            
-            # Ищем JSON объект в тексте
-            import re
-            json_match = re.search(r'\{.*\}', cleaned_content, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    pass
-            
+        ФОРМАТ ОТВЕТА: ТОЛЬКО чистый JSON без дополнительного текста"""
+
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                return json.loads(cleaned_content.strip())
-            except json.JSONDecodeError:
-                raise LLMError(f"Не удалось распарсить JSON ответ: {e}\nОтвет: {response.content}")
+                response = await self.analyze_with_prompt(
+                    system_prompt=system_prompt,
+                    user_input=f"Данные для анализа:\n{data_to_analyze}",
+                    model=model,
+                    temperature=0.1  # Очень низкая температура для стабильности
+                )
+                
+                # Улучшенная очистка ответа
+                cleaned_content = response.content.strip()
+                
+                # Удаляем теги <think>...</think>
+                if '<think>' in cleaned_content and '</think>' in cleaned_content:
+                    start = cleaned_content.find('</think>') + 8
+                    cleaned_content = cleaned_content[start:].strip()
+                
+                # Удаляем markdown блоки
+                if cleaned_content.startswith("```json"):
+                    cleaned_content = cleaned_content[7:]
+                if cleaned_content.endswith("```"):
+                    cleaned_content = cleaned_content[:-3]
+                
+                # Ищем JSON объект в тексте
+                import re
+                json_match = re.search(r'\{.*\}', cleaned_content, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                else:
+                    json_str = cleaned_content.strip()
+                
+                # Пытаемся парсить
+                result = json.loads(json_str)
+                return result
+                
+            except json.JSONDecodeError as e:
+                if attempt == max_retries - 1:
+                    # Последняя попытка - возвращаем ошибку
+                    raise LLMError(
+                        f"Не удалось распарсить JSON после {max_retries} попыток: {e}\n"
+                        f"Последний ответ: {response.content[:300]}..."
+                    )
+                
+                # Повторяем с более строгим промптом
+                system_prompt += f"\n\nВНИМАНИИ: Предыдущая попытка содержала ошибку JSON. Попытка {attempt + 1}/{max_retries}."
+                
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise LLMError(f"Неожиданная ошибка при извлечении данных: {str(e)}")
     
     def get_stats(self) -> Dict[str, Any]:
         """Получение статистики использования"""

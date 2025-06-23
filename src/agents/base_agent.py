@@ -23,7 +23,7 @@ class AgentConfig:
     description: str
     llm_config: LLMConfig
     max_retries: int = 3
-    timeout_seconds: int = 120
+    timeout_seconds: int = 180
     temperature: float = 0.1
     use_risk_analysis_client: bool = False
 
@@ -436,39 +436,41 @@ class EvaluationAgent(BaseAgent):
         assessment_id: str,
         examples: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Оценка риска с использованием специализированного клиента
+        """Оценка риска с использованием специализированного клиента"""
         
-        Args:
-            risk_type: Тип риска
-            agent_data: Данные об агенте
-            evaluation_criteria: Критерии оценки
-            assessment_id: ID оценки
-            examples: Примеры оценок
+        try:
+            if not isinstance(self.llm_client, RiskAnalysisLLMClient):
+                raise ValueError("Агент-оценщик должен использовать RiskAnalysisLLMClient")
             
-        Returns:
-            Результат оценки риска
-        """
-        if not isinstance(self.llm_client, RiskAnalysisLLMClient):
-            raise ValueError("Агент-оценщик должен использовать RiskAnalysisLLMClient")
-        
-        result = await self.llm_client.evaluate_risk(
-            risk_type=risk_type,
-            agent_data=agent_data,
-            evaluation_criteria=evaluation_criteria,
-            examples=examples
-        )
-        
-        # Логируем оценку
-        self.logger.log_risk_evaluation(
-            self.name,
-            assessment_id,
-            risk_type,
-            result["total_score"],
-            result["risk_level"]
-        )
-        
-        return result
+            result = await self.llm_client.evaluate_risk(
+                risk_type=risk_type,
+                agent_data=agent_data,
+                evaluation_criteria=evaluation_criteria,
+                examples=examples
+            )
+            
+            # ИСПРАВЛЕНИЕ: Применяем дополнительную валидацию
+            validated_result = self._ensure_required_fields(result)
+            
+            # Логируем оценку
+            self.logger.log_risk_evaluation(
+                self.name,
+                assessment_id,
+                risk_type,
+                validated_result["total_score"],
+                validated_result["risk_level"]
+            )
+            
+            return validated_result
+            
+        except Exception as e:
+            # ИСПРАВЛЕНИЕ: В случае любой ошибки возвращаем безопасные дефолтные данные
+            self.logger.bind_context(assessment_id, self.name).error(
+                f"❌ Ошибка оценки риска {risk_type}: {e}"
+            )
+            
+            # Возвращаем дефолтные данные вместо exception
+            return self._get_default_evaluation_data(f"Ошибка оценки риска: {str(e)}")
     
     def _get_required_result_fields(self) -> List[str]:
         """Обязательные поля для результата оценки риска"""
@@ -477,93 +479,181 @@ class EvaluationAgent(BaseAgent):
             "risk_level", "probability_reasoning", "impact_reasoning"
         ]
     def _parse_llm_response(self, response_content: str) -> Dict[str, Any]:
-        """Парсинг ответа LLM с извлечением JSON - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        """Парсинг ответа LLM с извлечением JSON - ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
+            # Удаляем теги <think>...</think> если есть
+            cleaned_content = response_content
+            if '<think>' in cleaned_content and '</think>' in cleaned_content:
+                start = cleaned_content.find('</think>') + 8
+                cleaned_content = cleaned_content[start:].strip()
+            
             # Ищем JSON блок в ответе
-            if "```json" in response_content:
-                start = response_content.find("```json") + 7
-                end = response_content.find("```", start)
+            json_content = None
+            
+            if "```json" in cleaned_content:
+                start = cleaned_content.find("```json") + 7
+                end = cleaned_content.find("```", start)
                 if end != -1:
-                    json_content = response_content[start:end].strip()
+                    json_content = cleaned_content[start:end].strip()
                 else:
-                    json_content = response_content[start:].strip()
+                    json_content = cleaned_content[start:].strip()
             else:
                 # Пытаемся найти JSON по фигурным скобкам
-                start = response_content.find("{")
-                end = response_content.rfind("}")
+                start = cleaned_content.find("{")
+                end = cleaned_content.rfind("}")
                 if start != -1 and end != -1 and end > start:
-                    json_content = response_content[start:end+1]
+                    json_content = cleaned_content[start:end+1]
                 else:
-                    json_content = response_content.strip()
+                    json_content = cleaned_content.strip()
             
+            # Пытаемся парсить JSON
             parsed_data = json.loads(json_content)
             
-            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем обязательные поля и добавляем если отсутствуют
-            required_fields = {
-                "probability_score": 3,  # дефолтное значение
-                "impact_score": 3,
-                "total_score": 9,
-                "risk_level": "medium",
-                "probability_reasoning": "Автоматически сгенерированное обоснование",
-                "impact_reasoning": "Автоматически сгенерированное обоснование",
-                "identified_risks": [],
-                "recommendations": [],
-                "suggested_controls": [],
-                "confidence_level": 0.7
-            }
-            
-            # Добавляем отсутствующие поля
-            for field, default_value in required_fields.items():
-                if field not in parsed_data:
-                    parsed_data[field] = default_value
-                    print(f"⚠️ Добавлено отсутствующее поле {field}: {default_value}")
-            
-            # Валидируем числовые поля
-            if "probability_score" in parsed_data:
-                try:
-                    parsed_data["probability_score"] = int(parsed_data["probability_score"])
-                    if not (1 <= parsed_data["probability_score"] <= 5):
-                        parsed_data["probability_score"] = 3
-                except (ValueError, TypeError):
-                    parsed_data["probability_score"] = 3
-            
-            if "impact_score" in parsed_data:
-                try:
-                    parsed_data["impact_score"] = int(parsed_data["impact_score"])
-                    if not (1 <= parsed_data["impact_score"] <= 5):
-                        parsed_data["impact_score"] = 3
-                except (ValueError, TypeError):
-                    parsed_data["impact_score"] = 3
-            
-            # Пересчитываем total_score
-            parsed_data["total_score"] = parsed_data["probability_score"] * parsed_data["impact_score"]
-            
-            # Определяем risk_level на основе total_score
-            total_score = parsed_data["total_score"]
-            if total_score <= 6:
-                parsed_data["risk_level"] = "low"
-            elif total_score <= 14:
-                parsed_data["risk_level"] = "medium"
-            else:
-                parsed_data["risk_level"] = "high"
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем и дополняем обязательные поля
+            parsed_data = self._ensure_required_fields(parsed_data)
             
             return parsed_data
             
         except json.JSONDecodeError as e:
-            # Если парсинг не удался, возвращаем минимальные валидные данные
-            print(f"⚠️ Ошибка парсинга JSON, возвращаем дефолтные данные: {e}")
-            return {
-                "probability_score": 3,
-                "impact_score": 3,
-                "total_score": 9,
-                "risk_level": "medium",
-                "probability_reasoning": f"Не удалось распарсить ответ LLM: {str(e)}",
-                "impact_reasoning": "Использованы дефолтные значения",
-                "identified_risks": ["Ошибка парсинга ответа LLM"],
-                "recommendations": ["Проверить промпт и формат ответа"],
-                "suggested_controls": ["Улучшить валидацию ответов"],
-                "confidence_level": 0.3
-            }
+            # Если парсинг не удался, возвращаем безопасные дефолтные данные
+            self.logger.bind_context("unknown", self.name).warning(
+                f"⚠️ Ошибка парсинга JSON, используем дефолтные значения: {e}"
+            )
+            return self._get_default_evaluation_data(f"Ошибка парсинга JSON: {str(e)}")
+        
+        except Exception as e:
+            # Любая другая ошибка
+            self.logger.bind_context("unknown", self.name).error(
+                f"❌ Неожиданная ошибка при парсинге ответа LLM: {e}"
+            )
+            return self._get_default_evaluation_data(f"Неожиданная ошибка: {str(e)}")
+
+    def _ensure_required_fields(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Обеспечивает наличие всех обязательных полей с валидными значениями"""
+        
+        # Определяем обязательные поля с дефолтными значениями
+        required_fields = {
+            "probability_score": 3,
+            "impact_score": 3, 
+            "total_score": 9,
+            "risk_level": "medium",
+            "probability_reasoning": "Автоматически сгенерированное обоснование вероятности",
+            "impact_reasoning": "Автоматически сгенерированное обоснование воздействия",
+            "key_factors": [],
+            "recommendations": [],
+            "confidence_level": 0.7
+        }
+        
+        # Добавляем отсутствующие поля
+        for field, default_value in required_fields.items():
+            if field not in parsed_data or parsed_data[field] is None:
+                parsed_data[field] = default_value
+                self.logger.bind_context("unknown", self.name).debug(
+                    f"🔧 Добавлено отсутствующее поле {field}: {default_value}"
+                )
+        
+        # Валидируем и исправляем числовые поля
+        parsed_data = self._validate_numeric_fields(parsed_data)
+        
+        # Валидируем и исправляем строковые поля
+        parsed_data = self._validate_string_fields(parsed_data)
+        
+        # Валидируем и исправляем списковые поля
+        parsed_data = self._validate_list_fields(parsed_data)
+        
+        # Пересчитываем зависимые поля
+        parsed_data["total_score"] = parsed_data["probability_score"] * parsed_data["impact_score"]
+        
+        # Определяем risk_level на основе total_score
+        total_score = parsed_data["total_score"]
+        if total_score <= 6:
+            parsed_data["risk_level"] = "low"
+        elif total_score <= 14:
+            parsed_data["risk_level"] = "medium"
+        else:
+            parsed_data["risk_level"] = "high"
+        
+        return parsed_data
+
+    def _validate_numeric_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Валидирует и исправляет числовые поля"""
+        
+        # Валидация probability_score (1-5)
+        try:
+            data["probability_score"] = int(data["probability_score"])
+            if not (1 <= data["probability_score"] <= 5):
+                data["probability_score"] = 3
+        except (ValueError, TypeError):
+            data["probability_score"] = 3
+        
+        # Валидация impact_score (1-5)
+        try:
+            data["impact_score"] = int(data["impact_score"])
+            if not (1 <= data["impact_score"] <= 5):
+                data["impact_score"] = 3
+        except (ValueError, TypeError):
+            data["impact_score"] = 3
+        
+        # Валидация confidence_level (0.0-1.0)
+        try:
+            data["confidence_level"] = float(data["confidence_level"])
+            if not (0.0 <= data["confidence_level"] <= 1.0):
+                data["confidence_level"] = 0.7
+        except (ValueError, TypeError):
+            data["confidence_level"] = 0.7
+        
+        return data
+
+    def _validate_string_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Валидирует и исправляет строковые поля"""
+        
+        # Валидация risk_level
+        valid_levels = ["low", "medium", "high"]
+        if data.get("risk_level") not in valid_levels:
+            data["risk_level"] = "medium"
+        
+        # Валидация reasoning полей
+        if not data.get("probability_reasoning") or len(str(data["probability_reasoning"]).strip()) < 10:
+            data["probability_reasoning"] = "Обоснование вероятности не предоставлено или некорректно"
+        
+        if not data.get("impact_reasoning") or len(str(data["impact_reasoning"]).strip()) < 10:
+            data["impact_reasoning"] = "Обоснование воздействия не предоставлено или некорректно"
+        
+        return data
+
+    def _validate_list_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Валидирует и исправляет списковые поля"""
+        
+        list_fields = ["key_factors", "recommendations"]
+        
+        for field in list_fields:
+            if not isinstance(data.get(field), list):
+                data[field] = []
+            
+            # Убираем пустые строки и None
+            data[field] = [
+                item for item in data[field] 
+                if item and isinstance(item, str) and item.strip()
+            ]
+            
+            # Ограничиваем количество элементов
+            data[field] = data[field][:10]
+        
+        return data
+
+    def _get_default_evaluation_data(self, error_message: str) -> Dict[str, Any]:
+        """Возвращает безопасные дефолтные данные для оценки"""
+        return {
+            "probability_score": 3,
+            "impact_score": 3,
+            "total_score": 9,
+            "risk_level": "medium",
+            "probability_reasoning": f"Не удалось получить обоснование от LLM. Ошибка: {error_message}",
+            "impact_reasoning": "Использованы дефолтные значения из-за ошибки парсинга",
+            "key_factors": ["Ошибка получения данных от LLM"],
+            "recommendations": ["Проверить промпт и формат ответа", "Повторить оценку"],
+            "confidence_level": 0.3
+        }
 
 # ===============================
 # Фабрики для создания агентов
