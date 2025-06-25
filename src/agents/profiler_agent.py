@@ -56,7 +56,7 @@ class ProfilerAgent(AnalysisAgent):
 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ:
 - name: название агента
 - agent_type: тип агента (chatbot, assistant, trader, scorer, analyzer, generator)
-- autonomy_level: уровень автономности (manual, assisted, supervised, autonomous)
+- autonomy_level: уровень автономности (supervised, semi_autonomous, autonomous)
 - data_access: типы данных (public, internal, confidential, critical)
 - target_audience: целевая аудитория
 - llm_model: используемая модель
@@ -285,7 +285,7 @@ class ProfilerAgent(AnalysisAgent):
     "description": "string - описание назначения агента",
     "agent_type": "string - один из: chatbot, assistant, trader, scorer, analyzer, generator, other",
     "llm_model": "string - используемая LLM модель",
-    "autonomy_level": "string - один из: manual, assisted, supervised, autonomous",
+    "autonomy_level": "string - один из: supervised, semi_autonomous, autonomous",
     "data_access": ["array of strings - типы данных: public, internal, confidential, critical"],
     "external_apis": ["array of strings - внешние API"],
     "target_audience": "string - целевая аудитория",
