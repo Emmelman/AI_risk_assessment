@@ -308,8 +308,10 @@ class DatabaseManager:
     # Методы для работы с оценками
     # ===============================
     
+    # src/models/database.py - ИСПРАВЛЕНИЕ метода save_risk_assessment
+
     async def save_risk_assessment(self, assessment: AgentRiskAssessment, profile_id: str) -> str:
-        """Сохранение итоговой оценки рисков"""
+        """Сохранение итоговой оценки рисков - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         assessment_id = str(uuid.uuid4())
         
         async with self.async_session() as session:
@@ -318,8 +320,9 @@ class DatabaseManager:
                 id=assessment_id,
                 agent_profile_id=profile_id,
                 overall_risk_score=assessment.overall_risk_score,
-                overall_risk_level=assessment.overall_risk_level.value,
-                highest_risk_areas=[area.value for area in assessment.highest_risk_areas],
+                overall_risk_level=assessment.overall_risk_level.value if hasattr(assessment.overall_risk_level, 'value') else str(assessment.overall_risk_level),
+                # ИСПРАВЛЕНО: highest_risk_areas уже список строк, не нужно .value
+                highest_risk_areas=assessment.highest_risk_areas,
                 priority_recommendations=assessment.priority_recommendations,
                 suggested_guardrails=assessment.suggested_guardrails,
                 total_expected_loss=assessment.total_expected_loss,
@@ -329,32 +332,38 @@ class DatabaseManager:
             session.add(db_assessment)
             
             # Сохраняем оценки по типам рисков
-            for risk_type, evaluation in assessment.risk_evaluations.items():
+            for risk_type_key, evaluation in assessment.risk_evaluations.items():
+                # ИСПРАВЛЕНО: risk_type_key уже строка, не нужно .value
+                risk_type_str = risk_type_key if isinstance(risk_type_key, str) else str(risk_type_key)
+                
                 db_evaluation = RiskEvaluationDB(
                     assessment_id=assessment_id,
-                    risk_type=risk_type.value,
+                    risk_type=risk_type_str,
                     probability_score=evaluation.probability_score,
                     impact_score=evaluation.impact_score,
                     total_score=evaluation.total_score,
-                    risk_level=evaluation.risk_level.value,
+                    risk_level=evaluation.risk_level.value if hasattr(evaluation.risk_level, 'value') else str(evaluation.risk_level),
                     probability_reasoning=evaluation.probability_reasoning,
                     impact_reasoning=evaluation.impact_reasoning,
-                    key_factors=evaluation.key_factors,
-                    recommendations=evaluation.recommendations,
+                    key_factors=evaluation.key_factors or [],
+                    recommendations=evaluation.recommendations or [],
                     evaluator_agent=evaluation.evaluator_agent,
                     confidence_level=evaluation.confidence_level
                 )
                 session.add(db_evaluation)
             
             # Сохраняем оценки критика
-            for risk_type, critic_eval in assessment.critic_evaluations.items():
+            for risk_type_key, critic_eval in assessment.critic_evaluations.items():
+                # ИСПРАВЛЕНО: risk_type_key уже строка, не нужно .value
+                risk_type_str = risk_type_key if isinstance(risk_type_key, str) else str(risk_type_key)
+                
                 db_critic = CriticEvaluationDB(
                     assessment_id=assessment_id,
-                    risk_type=risk_type.value,
+                    risk_type=risk_type_str,
                     quality_score=critic_eval.quality_score,
                     is_acceptable=critic_eval.is_acceptable,
-                    issues_found=critic_eval.issues_found,
-                    improvement_suggestions=critic_eval.improvement_suggestions,
+                    issues_found=critic_eval.issues_found or [],
+                    improvement_suggestions=critic_eval.improvement_suggestions or [],
                     critic_reasoning=critic_eval.critic_reasoning
                 )
                 session.add(db_critic)
