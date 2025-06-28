@@ -443,11 +443,12 @@ class EvaluationAgent(BaseAgent):
             if not isinstance(self.llm_client, RiskAnalysisLLMClient):
                 raise ValueError("Агент-оценщик должен использовать RiskAnalysisLLMClient")
             
+            # ИСПРАВЛЕНИЕ: Передаем параметр examples в вызов
             result = await self.llm_client.evaluate_risk(
                 risk_type=risk_type,
                 agent_data=agent_data,
                 evaluation_criteria=evaluation_criteria,
-                examples=examples
+                examples=examples  # ИСПРАВЛЕНО: Добавлен параметр examples
             )
             
             # ИСПРАВЛЕНИЕ: Применяем дополнительную валидацию
