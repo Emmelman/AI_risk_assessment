@@ -143,6 +143,26 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
                 assessment_id=assessment_id
             )
             
+            print("\n🔍 DEBUG: Анализ результата workflow:")
+            print(f"result.keys(): {list(result.keys())}")
+            print(f"result['success']: {result.get('success')}")
+            print(f"result['current_step']: {result.get('current_step')}")
+
+            final_assessment = result.get("final_assessment")
+            if final_assessment:
+                print(f"final_assessment.keys(): {list(final_assessment.keys())}")
+                print(f"final_assessment['assessment_id']: {final_assessment.get('assessment_id')}")
+                print(f"final_assessment['overall_risk_level']: {final_assessment.get('overall_risk_level')}")
+                print(f"final_assessment['overall_risk_score']: {final_assessment.get('overall_risk_score')}")
+                
+                risk_evaluations = final_assessment.get("risk_evaluations", {})
+                print(f"risk_evaluations.keys(): {list(risk_evaluations.keys()) if risk_evaluations else 'None'}")
+                
+                recommendations = final_assessment.get("priority_recommendations", [])
+                print(f"recommendations count: {len(recommendations) if recommendations else 0}")
+            else:
+                print("final_assessment: None")
+
             progress.update(task, completed=True)
             
             if result["success"]:
@@ -451,54 +471,136 @@ class DemoAgent:
 
 
 # Вспомогательные функции для отображения результатов
+# Исправленная функция для main.py
+# Найдите и замените функцию _display_assessment_result
+
 async def _display_assessment_result(result, output_file=None):
-    """Отображение результатов оценки"""
-    assessment = result.get("assessment")
+    """ИСПРАВЛЕННОЕ отображение результатов оценки"""
+    
+    # ИСПРАВЛЕНИЕ: проверяем разные возможные ключи
+    assessment = result.get("final_assessment") or result.get("assessment")
+    
     if not assessment:
         console.print("[red]❌ Нет данных для отображения[/red]")
+        console.print(f"[dim]DEBUG: Доступные ключи в result: {list(result.keys())}[/dim]")
+        
+        # Пытаемся отобразить хотя бы базовую информацию из result
+        if result.get("success"):
+            assessment_id = result.get("assessment_id", "unknown")
+            processing_time = result.get("processing_time", 0)
+            console.print(f"[yellow]Assessment ID: {assessment_id}[/yellow]")
+            console.print(f"[yellow]Время выполнения: {processing_time:.1f} секунд[/yellow]")
+            console.print("[yellow]⚠️ Детальные результаты недоступны[/yellow]")
         return
+    
+    # Извлекаем данные с fallback значениями
+    assessment_id = assessment.get('assessment_id', result.get('assessment_id', 'unknown'))
+    overall_risk_level = assessment.get('overall_risk_level', 'unknown')
+    overall_risk_score = assessment.get('overall_risk_score', 0)
+    processing_time = assessment.get('processing_time_seconds', result.get('processing_time', 0))
     
     # Основная информация
     console.print(Panel(
         f"[bold green]🎯 Оценка завершена успешно![/bold green]\n\n"
-        f"Assessment ID: {assessment.get('id', 'unknown')}\n"
-        f"Общий уровень риска: [bold]{assessment.get('overall_risk_level', 'unknown').upper()}[/bold]\n"
-        f"Общий балл: {assessment.get('overall_risk_score', 0)}/25\n"
-        f"Время обработки: {assessment.get('processing_time_seconds', 0):.1f} секунд",
+        f"Assessment ID: {assessment_id}\n"
+        f"Общий уровень риска: [bold]{overall_risk_level.upper()}[/bold]\n"
+        f"Общий балл: {overall_risk_score}/25\n"
+        f"Время обработки: {processing_time:.1f} секунд",
         title="📊 Результаты оценки",
         border_style="green"
     ))
     
-    # Детальные оценки
-    risk_evaluations = result.get("risk_evaluations", {})
+    # Детальные оценки рисков
+    risk_evaluations = assessment.get("risk_evaluations", {})
     if risk_evaluations:
         table = Table(title="🔍 Детальные оценки рисков")
         table.add_column("Тип риска", style="cyan")
         table.add_column("Балл", style="white")
         table.add_column("Уровень", style="white")
+        table.add_column("Детали", style="dim")
+        
+        # Названия рисков для отображения
+        risk_names = {
+            'ethical': 'Этические риски',
+            'social': 'Социальные риски', 
+            'security': 'Безопасность данных',
+            'stability': 'Стабильность LLM',
+            'autonomy': 'Автономность',
+            'regulatory': 'Регуляторные риски'
+        }
         
         for risk_type, evaluation in risk_evaluations.items():
-            level = evaluation.get('risk_level', 'unknown')
-            color = {
-                'low': 'green',
-                'medium': 'yellow',
-                'high': 'red'
-            }.get(level, 'white')
+            risk_name = risk_names.get(risk_type, risk_type)
             
-            table.add_row(
-                risk_type,
-                f"{evaluation.get('total_score', 0)}/25",
-                f"[{color}]{level.upper()}[/{color}]"
-            )
+            if isinstance(evaluation, dict):
+                level = evaluation.get('risk_level', 'unknown')
+                total_score = evaluation.get('total_score', 0)
+                prob_score = evaluation.get('probability_score', 0)
+                impact_score = evaluation.get('impact_score', 0)
+                
+                color = {
+                    'low': 'green',
+                    'medium': 'yellow',
+                    'high': 'red'
+                }.get(level, 'white')
+                
+                table.add_row(
+                    risk_name,
+                    f"{total_score}/25",
+                    f"[{color}]{level.upper()}[/{color}]",
+                    f"P:{prob_score}/5 × I:{impact_score}/5"
+                )
+            else:
+                table.add_row(
+                    risk_name,
+                    "N/A",
+                    "[dim]ОШИБКА[/dim]",
+                    "Неверный формат данных"
+                )
         
         console.print(table)
+    else:
+        console.print("[yellow]⚠️ Детальные оценки рисков недоступны[/yellow]")
     
     # Рекомендации
     recommendations = assessment.get("priority_recommendations", [])
     if recommendations:
         console.print("\n[bold green]💡 Приоритетные рекомендации:[/bold green]")
-        for i, rec in enumerate(recommendations[:5], 1):
+        for i, rec in enumerate(recommendations[:10], 1):  # Показываем до 10 рекомендаций
             console.print(f"  {i}. {rec}")
+    else:
+        console.print("\n[yellow]⚠️ Рекомендации недоступны[/yellow]")
+    
+    # Показываем сводку по качеству (если доступна)
+    eval_summary = assessment.get("evaluation_summary", {})
+    if eval_summary:
+        success_rate = eval_summary.get("success_rate", 0)
+        successful_count = eval_summary.get("successful_evaluations", 0)
+        total_count = eval_summary.get("total_evaluations", 6)
+        
+        console.print(f"\n[bold blue]📈 Качество оценки:[/bold blue]")
+        console.print(f"  • Успешных оценок: {successful_count}/{total_count} ({success_rate:.1%})")
+        
+        if success_rate >= 0.8:
+            console.print("  • [green]🏆 Отличное качество результатов![/green]")
+        elif success_rate >= 0.5:
+            console.print("  • [yellow]👍 Хорошее качество результатов[/yellow]")
+        else:
+            console.print("  • [red]⚠️ Низкое качество результатов[/red]")
+    
+    # Сводка по найденным проблемам 
+    highest_risks = []
+    if risk_evaluations:
+        for risk_type, evaluation in risk_evaluations.items():
+            if isinstance(evaluation, dict):
+                score = evaluation.get('total_score', 0)
+                if score > 15:  # High risk
+                    highest_risks.append(f"{risk_names.get(risk_type, risk_type)} ({score}/25)")
+    
+    if highest_risks:
+        console.print(f"\n[bold red]⚠️ Области высокого риска:[/bold red]")
+        for risk in highest_risks:
+            console.print(f"  • {risk}")
     
     # Сохранение в файл
     if output_file:
@@ -506,8 +608,20 @@ async def _display_assessment_result(result, output_file=None):
             output_path = Path(output_file)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
+            # Сохраняем весь результат
+            save_data = {
+                "assessment": assessment,
+                "metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "version": "1.0",
+                    "tool": "AI_Risk_Assessment",
+                    "assessment_id": assessment_id
+                },
+                "raw_result": result  # Включаем полный результат для отладки
+            }
+            
             with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2, default=str)
+                json.dump(save_data, f, ensure_ascii=False, indent=2, default=str)
             
             console.print(f"\n[green]💾 Результаты сохранены в {output_file}[/green]")
         except Exception as e:
