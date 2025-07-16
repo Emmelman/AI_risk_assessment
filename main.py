@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-
+from dotenv import load_dotenv
+load_dotenv()
 import click
 
 # Импорты системы оценки рисков
@@ -135,7 +136,7 @@ def assess(paths: tuple, agent_name: Optional[str], output: Optional[str],
             
             # Выполняем оценку
             result = await workflow.run_assessment(
-                file_paths=file_paths,
+                source_files=file_paths,
                 agent_name=agent_name
             )
             

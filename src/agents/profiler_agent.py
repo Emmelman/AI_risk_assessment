@@ -353,13 +353,13 @@ def create_profiler_node_function(profiler_agent: ProfilerAgent):
         
         # Получаем данные из состояния
         input_data = {
-            "file_paths": state.get("file_paths", []),
+            "source_files": state.get("source_files", []),
             "agent_name": state.get("agent_name", "Unknown Agent")
         }
         assessment_id = state.get("assessment_id", "unknown")
         
         # Выполняем профилирование
-        result = await profiler_agent.process(input_data, assessment_id)
+        result = await profiler_agent.run(input_data, assessment_id)
         
         # Обновляем состояние
         updated_state = state.copy()

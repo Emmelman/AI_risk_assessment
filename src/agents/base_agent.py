@@ -111,6 +111,61 @@ class BaseAgent(ABC):
         """
         pass
     
+    async def run(
+        self, 
+        input_data: Dict[str, Any], 
+        assessment_id: str = "unknown"
+    ) -> AgentTaskResult:
+        """
+        Универсальная точка входа для запуска агента с логированием и обработкой ошибок.
+        """
+        start_time = datetime.now()
+        task_type = self.__class__.__name__
+
+        # Привязываем имя агента к контексту логгера для этой операции
+        bound_logger = self.logger.bind(agent_name=self.name, assessment_id=assessment_id)
+        
+        try:
+            bound_logger.info(f"🚀 Запуск задачи: {task_type}")
+            
+            # Вызываем основной метод `process` с повторами
+            result = await self.execute_with_retry(
+                self.process,
+                input_data,
+                assessment_id=assessment_id
+            )
+            
+            execution_time = (datetime.now() - start_time).total_seconds()
+            bound_logger.info(f"✅ Задача {task_type} успешно завершена за {execution_time:.2f}с")
+
+            # Убедимся, что результат всегда AgentTaskResult
+            if isinstance(result, AgentTaskResult):
+                result.execution_time_seconds = execution_time
+                return result
+            else:
+                # Если `process` вернул что-то другое, оборачиваем это
+                return AgentTaskResult(
+                    agent_name=self.name,
+                    task_type=task_type,
+                    status=ProcessingStatus.COMPLETED,
+                    result_data=result,
+                    execution_time_seconds=execution_time,
+                    assessment_id=assessment_id
+                )
+
+        except Exception as e:
+            execution_time = (datetime.now() - start_time).total_seconds()
+            bound_logger.error(f"❌ Критическая ошибка в задаче {task_type}: {e}")
+            # Возвращаем стандартизированный результат ошибки
+            return AgentTaskResult(
+                agent_name=self.name,
+                task_type=task_type,
+                status=ProcessingStatus.FAILED,
+                error_message=str(e),
+                execution_time_seconds=execution_time,
+                assessment_id=assessment_id
+            )
+
     async def send_llm_request(
         self, 
         messages: List[LLMMessage], 

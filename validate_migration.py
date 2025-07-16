@@ -159,11 +159,10 @@ def test_critical_methods():
     
     tests = []
     
-    # Проверяем методы BaseAgent
+    # ... (тест для BaseAgent остается без изменений)
     try:
         from src.agents.base_agent import BaseAgent
         
-        # Проверяем наличие критических методов
         critical_methods = [
             '_parse_llm_response',
             '_ensure_required_fields', 
@@ -185,14 +184,22 @@ def test_critical_methods():
             
     except Exception as e:
         tests.append((f"BaseAgent методы", False, str(e)))
+
     
     # Проверяем методы EvaluationAgent - ИСПРАВЛЕННЫЙ тест
     try:
         from src.agents.base_agent import EvaluationAgent, AgentConfig
         
+        # ИСПРАВЛЕНИЕ: Создаем временный конкретный класс для теста
+        class ConcreteEvaluationAgent(EvaluationAgent):
+            def get_system_prompt(self) -> str:
+                pass # Реализация не нужна для теста
+            async def process(self, input_data: Dict[str, Any], assessment_id: str = "unknown"):
+                pass # Реализация не нужна для теста
+
         # Создаем с ПРАВИЛЬНЫМ конструктором
-        config = AgentConfig("test", "test")
-        evaluator = EvaluationAgent(config, "test_risk")  # risk_type передается отдельно
+        config = AgentConfig(name="test", description="test")
+        evaluator = ConcreteEvaluationAgent(config, risk_type="test_risk")
         
         # Проверяем что методы доступны
         evaluation_methods = ['evaluate_risk', 'get_system_prompt', 'process']

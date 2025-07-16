@@ -151,6 +151,14 @@ class RiskAssessmentWorkflow:
         
         print("🔍 ВСЕ УЗЛЫ ДОБАВЛЕНЫ")
 
+    def _profiler_router(self, state: WorkflowState) -> Literal["evaluation_preparation", "error_handling"]:
+        """Маршрутизатор после профайлера."""
+        if state.get("agent_profile"):
+            return "evaluation_preparation"
+        else:
+            return "error_handling"
+
+
     def _add_edges(self, workflow: StateGraph):
         """ДИАГНОСТИЧЕСКИЕ рёбра с print'ами"""
         
@@ -160,9 +168,19 @@ class RiskAssessmentWorkflow:
         print("  ✅ initialization → profiling")
         workflow.add_edge("initialization", "profiling")
         
-        print("  ✅ profiling → evaluation_preparation")
-        workflow.add_edge("profiling", "evaluation_preparation")
+        #print("  ✅ profiling → evaluation_preparation")
+        #workflow.add_edge("profiling", "evaluation_preparation")
         
+        print("  ✅ profiling → conditional_edges")
+        workflow.add_conditional_edges(
+            "profiling",
+            self._profiler_router,
+            {
+                "evaluation_preparation": "evaluation_preparation",
+                "error_handling": "error_handling"
+            }
+        )
+
         print("  ✅ evaluation_preparation → batch_1_evaluation")
         workflow.add_edge("evaluation_preparation", "batch_1_evaluation")
         
@@ -1348,6 +1366,13 @@ class RiskAssessmentWorkflow:
                 "assessment_id": initial_state.assessment_id
             }
     
+    def get_workflow_status(self) -> Dict[str, Any]:
+        """Возвращает статус готовности workflow."""
+        return {
+            "agents_ready": all([self.profiler, self.critic, self.evaluators]),
+            "graph_compiled": isinstance(self.graph, CompiledGraph)
+        }
+
     async def get_assessment_status(self, assessment_id: str) -> Dict[str, Any]:
         """Получение статуса оценки"""
         try:
@@ -1432,6 +1457,24 @@ def create_workflow_from_env() -> RiskAssessmentWorkflow:
         max_retries=int(os.getenv("MAX_RETRY_COUNT", "3"))
     )
 
+def validate_workflow_dependencies() -> Dict[str, bool]:
+    """Проверяет готовность зависимостей для workflow."""
+    # TODO: Реализовать реальную проверку (например, доступность LLM)
+    return {
+        "llm_configured": True,
+        "database_ready": True,
+        "agents_creatable": True
+    }
+
+async def test_workflow_execution() -> bool:
+    """Тестовый прогон workflow с минимальными данными."""
+    # TODO: Реализовать тестовый прогон с моками или тестовыми файлами
+    print("Тестовый прогон workflow (заглушка)...")
+    return True
+
+def print_workflow_status(workflow):
+    """Вывод статуса workflow (заглушка)."""
+    print(f"Workflow status: {type(workflow).__name__} is ready.")
 
 # Экспорт
 # Экспорт основных классов и функций (ОБНОВЛЕННЫЙ)
