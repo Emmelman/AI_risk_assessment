@@ -4,7 +4,7 @@
 6 специализированных агентов для оценки разных типов операционных рисков
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 
 from .base_agent import EvaluationAgent, AgentConfig
@@ -843,24 +843,17 @@ class SocialRiskEvaluator(EvaluationAgent):
 
 
 def create_all_evaluator_agents(
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
-    temperature: float = 0.1
+    llm_base_url: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    temperature: Optional[float] = None
 ) -> Dict[RiskType, EvaluationAgent]:
     """
     Создание всех 6 агентов-оценщиков
-    
-    Args:
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
-        temperature: Температура генерации
-        
-    Returns:
-        Словарь агентов по типам рисков
+    ОБНОВЛЕНО: Использует центральный конфигуратор
     """
     from .base_agent import create_agent_config
     
-    # Базовая конфигурация для агентов-оценщиков
+    # ИЗМЕНЕНО: Базовая конфигурация теперь использует центральный конфигуратор
     base_config_params = {
         "llm_base_url": llm_base_url,
         "llm_model": llm_model,
@@ -904,7 +897,7 @@ def create_all_evaluator_agents(
         )
     }
     
-    # Создаем агентов
+    # Создаем агентов-оценщиков (ВАЖНО: Сохраняем специализированные классы!)
     evaluators = {
         RiskType.ETHICAL: EthicalRiskEvaluator(configs[RiskType.ETHICAL]),
         RiskType.STABILITY: StabilityRiskEvaluator(configs[RiskType.STABILITY]),
@@ -1018,14 +1011,12 @@ def create_safe_evaluator_process_method(risk_type: RiskType, risk_description: 
 
 
 def create_evaluators_from_env() -> Dict[RiskType, EvaluationAgent]:
-    """Создание агентов-оценщиков из переменных окружения"""
-    import os
-    
-    return create_all_evaluator_agents(
-        llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1"))
-    )
+    """
+    Создание агентов-оценщиков из переменных окружения
+    ОБНОВЛЕНО: Использует центральный конфигуратор
+    """
+    # ИЗМЕНЕНО: Используем центральный конфигуратор, убираем дублирование чтения env
+    return create_all_evaluator_agents()
 
 
 # ===============================

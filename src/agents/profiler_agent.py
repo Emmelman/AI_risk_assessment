@@ -565,20 +565,13 @@ def create_profiler_node_function(profiler_agent: ProfilerAgent):
 # ===============================
 
 def create_profiler_agent(
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
-    temperature: float = 0.1
+    llm_base_url: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    temperature: Optional[float] = None
 ) -> ProfilerAgent:
     """
     Создание профайлер-агента
-    
-    Args:
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
-        temperature: Температура генерации
-        
-    Returns:
-        Настроенный профайлер-агент
+    ОБНОВЛЕНО: Использует центральный конфигуратор
     """
     from .base_agent import create_agent_config
     
@@ -595,16 +588,13 @@ def create_profiler_agent(
     
     return ProfilerAgent(config)
 
-
 def create_profiler_from_env() -> ProfilerAgent:
-    """Создание профайлер-агента из переменных окружения"""
-    import os
-    
-    return create_profiler_agent(
-        llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1"))
-    )
+    """
+    Создание профайлер-агента из переменных окружения
+    ОБНОВЛЕНО: Использует центральный конфигуратор
+    """
+    # ИЗМЕНЕНО: Используем центральный конфигуратор, убираем дублирование чтения env
+    return create_profiler_agent()
 
 
 # Экспорт

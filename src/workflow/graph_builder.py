@@ -5,6 +5,7 @@ LangGraph workflow для системы оценки рисков ИИ-аген
 """
 
 import asyncio
+from ..utils.llm_config_manager import get_llm_config_manager
 from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime
 
@@ -43,20 +44,23 @@ class RiskAssessmentWorkflow:
     
     def __init__(
         self,
-        llm_base_url: str = "http://127.0.0.1:1234",
-        llm_model: str = "qwen3-4b",
-        quality_threshold: float = 7.0,
-        max_retries: int = 3
+        llm_base_url: Optional[str] = None,
+        llm_model: Optional[str] = None,
+        quality_threshold: Optional[float] = None,
+        max_retries: Optional[int] = None
     ):
-        self.llm_base_url = llm_base_url
-        self.llm_model = llm_model
-        self.quality_threshold = quality_threshold
-        self.max_retries = max_retries
+        # ИЗМЕНЕНО: Используем центральный конфигуратор
+        manager = get_llm_config_manager()
         
-        # Создаем агентов
-        self.profiler = create_profiler_agent(llm_base_url, llm_model)
-        self.evaluators = create_all_evaluator_agents(llm_base_url, llm_model)
-        self.critic = create_critic_agent(llm_base_url, llm_model, quality_threshold)
+        self.llm_base_url = llm_base_url or manager.get_base_url()
+        self.llm_model = llm_model or manager.get_model()
+        self.quality_threshold = quality_threshold if quality_threshold is not None else manager.get_quality_threshold()
+        self.max_retries = max_retries if max_retries is not None else manager.get_max_retries()
+        
+        # Создаем агентов (теперь с центральной конфигурацией)
+        self.profiler = create_profiler_agent(self.llm_base_url, self.llm_model)
+        self.evaluators = create_all_evaluator_agents(self.llm_base_url, self.llm_model)
+        self.critic = create_critic_agent(self.llm_base_url, self.llm_model, quality_threshold=self.quality_threshold)
         
         # Логгер для LangGraph
         self.graph_logger = get_langgraph_logger()
@@ -1380,19 +1384,20 @@ class RiskAssessmentWorkflow:
 # ===============================
 
 def create_risk_assessment_workflow(
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
-    quality_threshold: float = 7.0,
-    max_retries: int = 3
+    llm_base_url: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    quality_threshold: Optional[float] = None,
+    max_retries: Optional[int] = None
 ) -> RiskAssessmentWorkflow:
     """
     Создание workflow для оценки рисков
+    ОБНОВЛЕНО: Использует центральный конфигуратор
     
     Args:
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
-        quality_threshold: Порог качества для критика
-        max_retries: Максимум повторов
+        llm_base_url: URL LLM сервера (None = из конфигуратора)
+        llm_model: Модель LLM (None = из конфигуратора)
+        quality_threshold: Порог качества для критика (None = из конфигуратора)
+        max_retries: Максимум повторов (None = из конфигуратора)
         
     Returns:
         Настроенный workflow
@@ -1406,15 +1411,13 @@ def create_risk_assessment_workflow(
 
 
 def create_workflow_from_env() -> RiskAssessmentWorkflow:
-    """Создание workflow из переменных окружения"""
-    import os
-    
-    return create_risk_assessment_workflow(
-        llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
-        quality_threshold=float(os.getenv("QUALITY_THRESHOLD", "7.0")),
-        max_retries=int(os.getenv("MAX_RETRY_COUNT", "3"))
-    )
+    """
+    Создание workflow из переменных окружения
+    ОБНОВЛЕНО: Использует центральный конфигуратор
+    """
+    # ИЗМЕНЕНО: Используем центральный конфигуратор, убираем дублирование чтения env
+    return create_risk_assessment_workflow()
+    # Все параметры теперь берутся из центрального конфигуратора
 
 
 # Экспорт

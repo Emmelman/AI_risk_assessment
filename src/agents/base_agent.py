@@ -13,6 +13,7 @@ from datetime import datetime
 from dataclasses import dataclass
 
 from ..utils.llm_client import LLMClient, LLMConfig, LLMMessage, RiskAnalysisLLMClient
+from ..utils.llm_config_manager import get_llm_config_manager
 from ..utils.logger import get_logger, log_agent_execution, log_llm_call
 from ..models.risk_models import AgentTaskResult, ProcessingStatus
 
@@ -748,59 +749,72 @@ class EvaluationAgent(BaseAgent):
 def create_agent_config(
     name: str,
     description: str,
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
-    temperature: float = 0.1,
-    max_retries: int = 3,
-    timeout_seconds: int = 120,
+    llm_base_url: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_retries: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
     use_risk_analysis_client: bool = False
 ) -> AgentConfig:
     """
     Создание конфигурации агента
+    ОБНОВЛЕНО: Использует центральный конфигуратор
     
     Args:
         name: Имя агента
         description: Описание агента
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
-        temperature: Температура генерации
-        max_retries: Максимум повторов
-        timeout_seconds: Тайм-аут в секундах
+        llm_base_url: URL LLM сервера (None = из конфигуратора)
+        llm_model: Модель LLM (None = из конфигуратора)
+        temperature: Температура генерации (None = из конфигуратора)
+        max_retries: Максимум повторов (None = из конфигуратора)
+        timeout_seconds: Тайм-аут в секундах (None = из конфигуратора)
         use_risk_analysis_client: Использовать специализированный клиент
         
     Returns:
         Конфигурация агента
     """
+    # ИЗМЕНЕНО: Получаем настройки из центрального конфигуратора
+    manager = get_llm_config_manager()
+    
+    # Используем значения из конфигуратора или переопределяем
+    actual_base_url = llm_base_url or manager.get_base_url()
+    actual_model = llm_model or manager.get_model()
+    actual_temperature = temperature if temperature is not None else manager.get_temperature()
+    actual_max_retries = max_retries if max_retries is not None else manager.get_max_retries()
+    actual_timeout = timeout_seconds if timeout_seconds is not None else manager.get_timeout()
+    
+    # Создаем LLM конфигурацию
     llm_config = LLMConfig(
-        base_url=llm_base_url,
-        model=llm_model,
-        temperature=temperature,
-        timeout=timeout_seconds
+        base_url=actual_base_url,
+        model=actual_model,
+        temperature=actual_temperature,
+        max_tokens=manager.get_max_tokens(),
+        timeout=actual_timeout,
+        max_retries=actual_max_retries,
+        retry_delay=manager.get_retry_delay()
     )
     
     return AgentConfig(
         name=name,
         description=description,
         llm_config=llm_config,
-        max_retries=max_retries,
-        timeout_seconds=timeout_seconds,
-        temperature=temperature,
+        max_retries=actual_max_retries,
+        timeout_seconds=actual_timeout,
+        temperature=actual_temperature,
         use_risk_analysis_client=use_risk_analysis_client
     )
 
 
 def create_default_config_from_env() -> AgentConfig:
-    """Создание конфигурации по умолчанию из переменных окружения"""
-    import os
-    
+    """
+    Создание конфигурации по умолчанию из переменных окружения
+    ОБНОВЛЕНО: Использует центральный конфигуратор
+    """
+    # ИЗМЕНЕНО: Используем центральный конфигуратор вместо прямого чтения env
     return create_agent_config(
         name="default_agent",
-        description="Агент с настройками по умолчанию",
-        llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-        max_retries=int(os.getenv("MAX_RETRY_COUNT", "3")),
-        timeout_seconds=120
+        description="Агент с настройками по умолчанию"
+        # Все остальные параметры берутся из центрального конфигуратора
     )
 
 

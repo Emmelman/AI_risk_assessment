@@ -4,7 +4,7 @@
 Анализирует результаты оценки и принимает решения о необходимости повторных оценок
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 
 from .base_agent import AnalysisAgent, AgentConfig
@@ -554,24 +554,21 @@ def create_quality_check_router(quality_threshold: float = 7.0):
 # ===============================
 
 def create_critic_agent(
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
-    temperature: float = 0.1,
-    quality_threshold: float = 7.0
+    llm_base_url: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    quality_threshold: Optional[float] = None
 ) -> CriticAgent:
     """
     Создание критик-агента
-    
-    Args:
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
-        temperature: Температура генерации
-        quality_threshold: Порог качества для принятия оценок
-        
-    Returns:
-        Настроенный критик-агент
+    ОБНОВЛЕНО: Использует центральный конфигуратор
     """
     from .base_agent import create_agent_config
+    from ..utils.llm_config_manager import get_llm_config_manager
+    
+    # ИЗМЕНЕНО: Получаем настройки из центрального конфигуратора
+    manager = get_llm_config_manager()
+    actual_quality_threshold = quality_threshold if quality_threshold is not None else manager.get_quality_threshold()
     
     config = create_agent_config(
         name="critic_agent",
@@ -584,19 +581,17 @@ def create_critic_agent(
         use_risk_analysis_client=True  # Критик использует специализированный клиент
     )
     
-    return CriticAgent(config, quality_threshold)
+    return CriticAgent(config, actual_quality_threshold)
 
 
 def create_critic_from_env() -> CriticAgent:
-    """Создание критик-агента из переменных окружения"""
-    import os
-    
-    return create_critic_agent(
-        llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-        quality_threshold=float(os.getenv("QUALITY_THRESHOLD", "7.0"))
-    )
+    """
+    Создание критик-агента из переменных окружения
+    ОБНОВЛЕНО: Использует центральный конфигуратор
+    """
+    # ИЗМЕНЕНО: Используем центральный конфигуратор, убираем дублирование чтения env
+    return create_critic_agent()
+    # Все параметры теперь берутся из центрального конфигуратора
 
 
 # ===============================

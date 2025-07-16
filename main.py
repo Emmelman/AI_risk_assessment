@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
-
+from src.utils.llm_config_manager import get_llm_config_manager
 import click
 from rich.console import Console
 from rich.table import Table
@@ -69,7 +69,7 @@ def cli(ctx, log_level, log_file, show_reasoning):
 @click.option('--output', '-o', help='Файл для сохранения результата (JSON)')
 @click.option('--quality-threshold', '-q', default=7.0, help='Порог качества для критика (0-10)')
 @click.option('--max-retries', '-r', default=3, help='Максимум повторов оценки')
-@click.option('--model', '-m', default='qwen3-4b', help='LLM модель')
+@click.option('--model', '-m', help='LLM модель (по умолчанию из .env)')
 @click.pass_context
 async def assess(ctx, source_files, agent_name, output, quality_threshold, max_retries, model):
     """Запуск оценки рисков ИИ-агента"""
@@ -113,11 +113,14 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
         llm_healthy = await workflow.profiler.health_check()
         if not llm_healthy:
             console.print("[red]❌ LM Studio недоступен на localhost:1234[/red]")
-            console.print("Убедитесь что LM Studio запущен с моделью qwen3-4b")
+            console.print("Убедитесь что LM Studio запущен с настроенной моделью")
             return
         
         console.print("[green]✅ LLM сервер доступен[/green]")
-        
+        # Показываем текущую конфигурацию
+        manager = get_llm_config_manager()
+        console.print(f"[blue]🤖 Используется модель: {manager.get_model()}[/blue]")
+        console.print(f"[blue]🌐 LLM сервер: {manager.get_base_url()}[/blue]")
         if show_reasoning:
             console.print("[blue]🧠 Рассуждения агентов будут отображаться в реальном времени[/blue]")
         

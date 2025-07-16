@@ -7,9 +7,10 @@
 import json
 import asyncio
 from typing import Dict, List, Optional, Any, AsyncGenerator
+
 from dataclasses import dataclass
 from datetime import datetime
-
+from .llm_config_manager import get_llm_config_manager
 import httpx
 from pydantic import BaseModel, Field
 
@@ -38,23 +39,61 @@ class LLMError(Exception):
         self.response_data = response_data
 
 
+# ТОЧЕЧНОЕ ИСПРАВЛЕНИЕ: Замените класс LLMConfig в llm_client.py
+
 @dataclass
 class LLMConfig:
     """Конфигурация LLM клиента"""
-    base_url: str = "http://127.0.0.1:1234"
-    model: str = "qwen3-4b"
-    temperature: float = 0.1
-    max_tokens: int = 4096
-    timeout: int = 120
-    max_retries: int = 3
-    retry_delay: float = 1.0
-
+    base_url: str
+    model: str  
+    temperature: float
+    max_tokens: int
+    timeout: int
+    max_retries: int
+    retry_delay: float
+    
+    @classmethod
+    def from_manager(cls, **overrides) -> 'LLMConfig':
+        """Создание конфигурации из центрального менеджера с возможностью переопределения"""
+        manager = get_llm_config_manager()
+        config = manager.get_config()
+        
+        # Применяем переопределения если есть
+        return cls(
+            base_url=overrides.get('base_url', config.base_url),
+            model=overrides.get('model', config.model),
+            temperature=overrides.get('temperature', config.temperature),
+            max_tokens=overrides.get('max_tokens', config.max_tokens),
+            timeout=overrides.get('timeout', config.timeout),
+            max_retries=overrides.get('max_retries', config.max_retries),
+            retry_delay=overrides.get('retry_delay', config.retry_delay)
+        )
+    
+    @classmethod 
+    def create_default(cls) -> 'LLMConfig':
+        """Создание конфигурации по умолчанию (fallback для обратной совместимости)"""
+        return cls(
+            base_url="http://127.0.0.1:1234",
+            model="qwen3-4b", 
+            temperature=0.1,
+            max_tokens=4096,
+            timeout=120,
+            max_retries=3,
+            retry_delay=1.0
+        )
 
 class LLMClient:
     """Асинхронный клиент для работы с LLM через OpenAI-совместимый API"""
     
     def __init__(self, config: Optional[LLMConfig] = None):
-        self.config = config or LLMConfig()
+        if config is None:
+            try:
+                self.config = LLMConfig.from_manager()
+            except Exception:
+                # Fallback для случаев когда конфигуратор недоступен
+                self.config = LLMConfig.create_default()
+        else:
+            self.config = config
         self.client = httpx.AsyncClient(
             base_url=self.config.base_url,
             timeout=self.config.timeout
@@ -868,25 +907,31 @@ class RiskAnalysisLLMClient(LLMClient):
 
 def create_llm_client(
     client_type: str = "standard",
-    base_url: str = "http://127.0.0.1:1234",
-    model: str = "qwen3-4b",
-    temperature: float = 0.1
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None
 ) -> LLMClient:
     """
     Фабрика для создания LLM клиентов
+    ОБНОВЛЕНО: Использует центральный конфигуратор
     
     Args:
         client_type: Тип клиента (standard, risk_analysis)
-        base_url: URL LLM сервера
-        model: Модель для использования
-        temperature: Температура генерации
+        base_url: URL LLM сервера (None = из конфигуратора)
+        model: Модель для использования (None = из конфигуратора)  
+        temperature: Температура генерации (None = из конфигуратора)
     """
     
-    config = LLMConfig(
-        base_url=base_url,
-        model=model,
-        temperature=temperature
-    )
+    # ИЗМЕНЕНО: Создаем конфигурацию из центрального менеджера
+    overrides = {}
+    if base_url is not None:
+        overrides['base_url'] = base_url
+    if model is not None:
+        overrides['model'] = model
+    if temperature is not None:
+        overrides['temperature'] = temperature
+    
+    config = LLMConfig.from_manager(**overrides)
     
     if client_type == "risk_analysis":
         return RiskAnalysisLLMClient(config)
@@ -902,20 +947,15 @@ def create_llm_client(
 _global_client: Optional[LLMClient] = None
 
 async def get_llm_client() -> LLMClient:
-    """Получение глобального LLM клиента"""
+    """
+    Получение глобального LLM клиента
+    ОБНОВЛЕНО: Использует центральный конфигуратор
+    """
     global _global_client
     
     if _global_client is None:
-        # Получаем настройки из переменных окружения
-        import os
-        
-        config = LLMConfig(
-            base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-            model=os.getenv("LLM_MODEL", "qwen3-4b"),
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096"))
-        )
-        
+        # ИЗМЕНЕНО: Используем центральный конфигуратор вместо прямого чтения env
+        config = LLMConfig.from_manager()
         _global_client = LLMClient(config)
         
         # Проверяем доступность
