@@ -453,7 +453,19 @@ def create_profiler_agent_legacy(
     )
     
     return ProfilerAgent(config)
-
+def create_profiler_agent_legacy(**kwargs) -> ProfilerAgent:
+    """
+    DEPRECATED: Legacy функция создания профайлера
+    
+    Используйте create_profiler_agent() без параметров.
+    """
+    import warnings
+    warnings.warn(
+        "create_profiler_agent_legacy deprecated. Use create_profiler_agent() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return create_profiler_agent()
 
 # Экспорт
 __all__ = [

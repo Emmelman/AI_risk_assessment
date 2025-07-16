@@ -56,36 +56,32 @@ class BaseAgent(ABC):
             "total_requests": 0,
             "successful_requests": 0,
             "failed_requests": 0,
-            "total_execution_time": 0.0,
-            "average_response_time": 0.0
+            "retry_attempts": 0
         }
     
     def _setup_llm_client(self):
         """Настройка LLM клиента через центральный конфигуратор"""
-        if self.config.llm_override:
-            # Используем переопределенную конфигурацию (для тестирования)
-            llm_config = self.config.llm_override
-        else:
-            # Получаем конфигурацию из центрального менеджера
-            global_config_manager = get_global_llm_config()
-            unified_config = global_config_manager.get_config()
+        try:
+            # Получаем центральную конфигурацию
+            config_manager = get_global_llm_config()
             
-            # Преобразуем унифицированную конфигурацию в LLMConfig
-            llm_config = LLMConfig(
-                base_url=unified_config.base_url,
-                model=unified_config.model,
-                temperature=unified_config.temperature,
-                max_tokens=unified_config.max_tokens,
-                timeout=unified_config.timeout,
-                max_retries=unified_config.max_retries,
-                retry_delay=unified_config.retry_delay
-            )
-        
-        # Создаем подходящий клиент
-        if self.config.use_risk_analysis_client:
-            self.llm_client = RiskAnalysisLLMClient(llm_config)
-        else:
-            self.llm_client = LLMClient(llm_config)
+            # Проверяем переопределение в конфигурации агента
+            if self.config.llm_override:
+                llm_config = self.config.llm_override
+                self.logger.info(f"Агент {self.config.name}: Используется переопределенная LLM конфигурация")
+            else:
+                llm_config = config_manager.get_config()
+                self.logger.debug(f"Агент {self.config.name}: Используется центральная LLM конфигурация")
+            
+            # Создаем клиент
+            if self.config.use_risk_analysis_client:
+                self.llm_client = RiskAnalysisLLMClient(llm_config)
+            else:
+                self.llm_client = LLMClient(llm_config)
+                
+        except Exception as e:
+            self.logger.error(f"Ошибка настройки LLM клиента для агента {self.config.name}: {e}")
+            raise
     
     @property
     def name(self) -> str:
@@ -114,6 +110,30 @@ class BaseAgent(ABC):
             Результат работы агента
         """
         pass
+    
+    async def send_llm_request(
+        self, 
+        messages: List[LLMMessage], 
+        assessment_id: str,
+        temperature: Optional[float] = None
+    ) -> str:
+        """Отправка запроса к LLM с обработкой ошибок"""
+        try:
+            self.stats["total_requests"] += 1
+            
+            with log_llm_call(self.name, assessment_id):
+                response = await self.llm_client.send_request(
+                    messages, 
+                    temperature or 0.3
+                )
+            
+            self.stats["successful_requests"] += 1
+            return response
+            
+        except Exception as e:
+            self.stats["failed_requests"] += 1
+            self.logger.error(f"Ошибка LLM запроса в агенте {self.name}: {e}")
+            raise
     
     @abstractmethod
     def get_system_prompt(self) -> str:

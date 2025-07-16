@@ -18,6 +18,10 @@ from ..utils.logger import LogContext
 class EthicalRiskEvaluator(EvaluationAgent):
     """Агент-оценщик этических и дискриминационных рисков"""
     
+    def __init__(self, config: AgentConfig):
+        # ИСПРАВЛЕНО: Передаем risk_type в родительский конструктор
+        super().__init__(config, risk_type="этические риски")
+
     def get_system_prompt(self) -> str:
         return """Ты - эксперт по этическим рискам ИИ-систем в банковской сфере.
 
@@ -159,6 +163,10 @@ class EthicalRiskEvaluator(EvaluationAgent):
 class StabilityRiskEvaluator(EvaluationAgent):
     """Агент-оценщик рисков ошибок и нестабильности LLM"""
     
+    def __init__(self, config: AgentConfig):
+        # ИСПРАВЛЕНО: Передаем risk_type в родительский конструктор
+        super().__init__(config, risk_type="риски стабильности и ошибок")
+
     def get_system_prompt(self) -> str:
         return """Ты - эксперт по техническим рискам LLM и стабильности ИИ-систем.
 
@@ -290,7 +298,10 @@ APIs: {', '.join(agent_profile.get('external_apis', ['Нет']))}
 
 class SecurityRiskEvaluator(EvaluationAgent):
     """Агент-оценщик рисков безопасности данных и систем"""
-    
+    def __init__(self, config: AgentConfig):
+        # ИСПРАВЛЕНО: Передаем risk_type в родительский конструктор
+        super().__init__(config, risk_type="риски безопасности данных и систем")
+
     def get_system_prompt(self) -> str:
         return """Ты - эксперт по информационной безопасности ИИ-систем в банковской сфере.
 
@@ -425,6 +436,10 @@ class SecurityRiskEvaluator(EvaluationAgent):
 class AutonomyRiskEvaluator(EvaluationAgent):
     """Агент-оценщик рисков автономности и управления"""
     
+    def __init__(self, config: AgentConfig):
+        # ИСПРАВЛЕНО: Передаем risk_type в родительский конструктор
+        super().__init__(config, risk_type="риски автономности и управления")
+
     def get_system_prompt(self) -> str:
         return """Ты - эксперт по рискам автономности ИИ-систем и корпоративного управления.
 
@@ -562,6 +577,10 @@ class AutonomyRiskEvaluator(EvaluationAgent):
 class RegulatoryRiskEvaluator(EvaluationAgent):
     """Агент-оценщик регуляторных и юридических рисков"""
     
+    def __init__(self, config: AgentConfig):
+        # ИСПРАВЛЕНО: Передаем risk_type в родительский конструктор
+        super().__init__(config, risk_type="регуляторные и юридические риски")
+
     def get_system_prompt(self) -> str:
         return """Ты - эксперт по регуляторным рискам ИИ в финансовом секторе России.
 
@@ -701,6 +720,10 @@ LLM: {agent_profile.get('llm_model', 'unknown')}
 
 class SocialRiskEvaluator(EvaluationAgent):
     """Агент-оценщик социальных и манипулятивных рисков"""
+    
+    def __init__(self, config: AgentConfig):
+        # ИСПРАВЛЕНО: Передаем risk_type в родительский конструктор
+        super().__init__(config, risk_type="социальные и манипулятивные риски")
     
     def get_system_prompt(self) -> str:
         return """Ты - эксперт по социальным рискам ИИ и защите от манипулятивных воздействий.

@@ -442,7 +442,19 @@ def summarize_critic_results(
         "common_issues": list(set(all_issues)),
         "improvement_suggestions": list(set(all_suggestions))
     }
-
+def create_critic_agent_legacy(**kwargs) -> CriticAgent:
+    """
+    DEPRECATED: Legacy функция создания критика
+    
+    Используйте create_critic_agent() без параметров.
+    """
+    import warnings
+    warnings.warn(
+        "create_critic_agent_legacy deprecated. Use create_critic_agent() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return create_critic_agent()
 
 # Экспорт
 __all__ = [

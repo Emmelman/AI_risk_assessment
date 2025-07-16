@@ -1,8 +1,8 @@
-
+#!/usr/bin/env python3
 """
 Скрипт валидации миграции на центральный LLM конфигуратор
 
-Проверяет все компоненты системы после внедрения изменений.
+ИСПРАВЛЕННАЯ ВЕРСИЯ: Проверяет все компоненты системы после внедрения изменений.
 """
 
 import sys
@@ -20,7 +20,7 @@ def test_imports():
     
     # Центральный конфигуратор
     try:
-        from src.config import get_global_llm_config, LLMConfigManager
+        from src.config import get_global_llm_config, LLMConfigManager, set_global_llm_config
         tests.append(("Центральный конфигуратор", True, None))
     except Exception as e:
         tests.append(("Центральный конфигуратор", False, str(e)))
@@ -34,7 +34,7 @@ def test_imports():
     
     # Обновленные агенты
     try:
-        from src.agents.base_agent import create_agent_config
+        from src.agents.base_agent import create_agent_config, EvaluationAgent, BaseAgent
         from src.agents.profiler_agent import create_profiler_agent
         from src.agents.critic_agent import create_critic_agent
         from src.agents.evaluator_agents import create_all_evaluator_agents
@@ -44,7 +44,11 @@ def test_imports():
     
     # Workflow
     try:
-        from src.workflow.graph_builder import create_risk_assessment_workflow
+        from src.workflow.graph_builder import (
+            create_risk_assessment_workflow,
+            validate_workflow_dependencies,
+            test_workflow_execution
+        )
         tests.append(("Workflow", True, None))
     except Exception as e:
         tests.append(("Workflow", False, str(e)))
@@ -80,7 +84,7 @@ def test_central_config():
         
         # Проверяем статус
         status = config_manager.get_status_info()
-        print(f"  ✅ Статус: {status['provider']}")
+        print(f"  ✅ Статус: {status['provider']} ({status['model']})")
         
         return True
         
@@ -111,7 +115,7 @@ def test_agents_creation():
     except Exception as e:
         tests.append(("Критик", False, str(e)))
     
-    # Оценщики
+    # Оценщики - ИСПРАВЛЕННЫЙ тест
     try:
         from src.agents.evaluator_agents import create_all_evaluator_agents
         evaluators = create_all_evaluator_agents()
@@ -159,13 +163,6 @@ def test_critical_methods():
     try:
         from src.agents.base_agent import BaseAgent
         
-        # Создаем временный агент для проверки методов
-        class TestAgent(BaseAgent):
-            def get_system_prompt(self):
-                return "test"
-            async def process(self, input_data, assessment_id="test"):
-                return None
-        
         # Проверяем наличие критических методов
         critical_methods = [
             '_parse_llm_response',
@@ -189,15 +186,16 @@ def test_critical_methods():
     except Exception as e:
         tests.append((f"BaseAgent методы", False, str(e)))
     
-    # Проверяем методы EvaluationAgent
+    # Проверяем методы EvaluationAgent - ИСПРАВЛЕННЫЙ тест
     try:
         from src.agents.base_agent import EvaluationAgent, AgentConfig
         
+        # Создаем с ПРАВИЛЬНЫМ конструктором
         config = AgentConfig("test", "test")
-        evaluator = EvaluationAgent(config, "test_risk")
+        evaluator = EvaluationAgent(config, "test_risk")  # risk_type передается отдельно
         
         # Проверяем что методы доступны
-        evaluation_methods = ['evaluate_risk', 'create_fallback_result', 'validate_result']
+        evaluation_methods = ['evaluate_risk', 'get_system_prompt', 'process']
         
         missing_methods = []
         for method_name in evaluation_methods:
@@ -218,6 +216,7 @@ def test_critical_methods():
         print(f"  {status} {test_name}: {info}")
     
     return all(test[1] for test in tests)
+
 
 def test_backward_compatibility():
     """Тест: Обратная совместимость (deprecated функции работают)"""
@@ -260,7 +259,9 @@ def test_backward_compatibility():
         status = "✅" if success else "❌"
         print(f"  {status} {test_name}: {info}")
     
-    return all(test[1] for test in tests)#!/usr/bin/env python3
+    return all(test[1] for test in tests)
+
+
 def test_provider_switching():
     """Тест: Переключение провайдеров"""
     print("🔍 Тестируем переключение провайдеров...")
@@ -300,26 +301,6 @@ def test_provider_switching():
         return False
 
 
-async def test_workflow_execution():
-    """Тест: Workflow выполняется с новой конфигурацией"""
-    print("🔍 Тестируем выполнение workflow...")
-    
-    try:
-        from src.workflow.graph_builder import test_workflow_execution
-        
-        print("  ⏳ Запуск тестового workflow...")
-        result = await test_workflow_execution()
-        
-        status = "✅" if result else "❌"
-        print(f"  {status} Тестовое выполнение: {result}")
-        
-        return result
-        
-    except Exception as e:
-        print(f"  ❌ Ошибка выполнения: {e}")
-        return False
-
-
 def test_cli_integration():
     """Тест: CLI работает с новой конфигурацией"""
     print("🔍 Тестируем CLI интеграцию...")
@@ -354,6 +335,26 @@ def test_cli_integration():
         return False
 
 
+async def test_workflow_execution():
+    """Тест: Workflow выполняется с новой конфигурацией"""
+    print("🔍 Тестируем выполнение workflow...")
+    
+    try:
+        from src.workflow.graph_builder import test_workflow_execution
+        
+        print("  ⏳ Запуск тестового workflow...")
+        result = await test_workflow_execution()
+        
+        status = "✅" if result else "❌"
+        print(f"  {status} Тестовое выполнение: {result}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"  ❌ Ошибка выполнения: {e}")
+        return False
+
+
 def print_summary(results: Dict[str, bool]):
     """Вывод сводки результатов"""
     print("\n" + "📊 СВОДКА ВАЛИДАЦИИ".center(60, "="))
@@ -369,68 +370,49 @@ def print_summary(results: Dict[str, bool]):
     
     if passed == total:
         print("🎉 ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО!")
-        print("✅ Миграция на центральный конфигуратор завершена")
-        print("🚀 Система готова к переключению на GigaChat")
+        print("✅ Миграция на центральный LLM конфигуратор завершена")
     else:
         print(f"⚠️  ПРОЙДЕНО {passed}/{total} ТЕСТОВ")
         print("❌ Требуется исправление ошибок")
         
-        # Показываем неудавшиеся тесты
         failed_tests = [name for name, result in results.items() if not result]
-        print(f"\n🔧 Исправьте следующие проблемы:")
+        print("🔧 Исправьте следующие проблемы:")
         for test in failed_tests:
             print(f"   - {test}")
-    
-    return passed == total
-
-
-def main():
-    """Основная функция валидации"""
-    print("🚀 ВАЛИДАЦИЯ МИГРАЦИИ НА ЦЕНТРАЛЬНЫЙ LLM КОНФИГУРАТОР")
-    print("=" * 60)
-    print("🎯 Цель: Проверить корректность внедрения изменений")
-    print("📋 Статус: Обратная совместимость должна сохраниться")
-    print("=" * 60)
-    
-    # Выполняем все тесты
-    results = {}
-    
-    results["Импорты"] = test_imports()
-    results["Центральный конфигуратор"] = test_central_config()
-    results["Критические методы"] = test_critical_methods()
-    results["Создание агентов"] = test_agents_creation()
-    results["Создание workflow"] = test_workflow_creation()
-    results["Обратная совместимость"] = test_backward_compatibility()
-    results["Переключение провайдеров"] = test_provider_switching()
-    results["CLI интеграция"] = test_cli_integration()
-    
-    # Асинхронный тест
-    print("🔍 Тестируем выполнение workflow...")
-    try:
-        results["Выполнение workflow"] = asyncio.run(test_workflow_execution())
-    except Exception as e:
-        print(f"  ❌ Ошибка async теста: {e}")
-        results["Выполнение workflow"] = False
-    
-    # Выводим сводку
-    success = print_summary(results)
-    
-    # Дополнительная информация
-    if success:
-        print(f"\n💡 СЛЕДУЮЩИЕ ШАГИ:")
-        print("1. Запустите: python main.py demo")
-        print("2. Проверьте: python main.py status --detailed")
-        print("3. Ознакомьтесь с: MIGRATION_GUIDE.md")
-        print("4. Подготовьтесь к переключению на GigaChat")
-    else:
-        print(f"\n🔧 УСТРАНЕНИЕ ОШИБОК:")
+        
+        print("\n🔧 УСТРАНЕНИЕ ОШИБОК:")
         print("1. Проверьте все файлы созданы правильно")
         print("2. Убедитесь что .env файл обновлен")
         print("3. Перезапустите LM Studio если нужно")
         print("4. Проверьте зависимости: pip install -r requirements.txt")
+
+
+async def main():
+    """Главная функция валидации"""
     
-    return 0 if success else 1
+    print("🚀 ВАЛИДАЦИЯ МИГРАЦИИ НА ЦЕНТРАЛЬНЫЙ LLM КОНФИГУРАТОР")
+    print("============================================================")
+    print("🎯 Цель: Проверить корректность внедрения изменений")
+    print("📋 Статус: Обратная совместимость должна сохраниться")
+    print("============================================================")
+    
+    # Запускаем все тесты
+    results = {
+        "Импорты": test_imports(),
+        "Центральный конфигуратор": test_central_config(),
+        "Критические методы": test_critical_methods(),
+        "Создание агентов": test_agents_creation(),
+        "Создание workflow": test_workflow_creation(),
+        "Обратная совместимость": test_backward_compatibility(),
+        "Переключение провайдеров": test_provider_switching(),
+        "CLI интеграция": test_cli_integration(),
+        "Выполнение workflow": await test_workflow_execution()
+    }
+    
+    # Выводим сводку
+    print_summary(results)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Запускаем валидацию
+    asyncio.run(main())

@@ -1444,9 +1444,11 @@ __all__ = [
     "create_workflow_from_env",
     
     # Утилиты диагностики
-    "validate_workflow_dependencies",
-    "test_workflow_execution", 
+    "validate_workflow_dependencies",  # ДОБАВЛЕНО
+    "test_workflow_execution",         # ДОБАВЛЕНО
     "print_workflow_status",
+    "get_workflow_health_check",       # ДОБАВЛЕНО
+    "diagnose_workflow_issues",        # ДОБАВЛЕНО
     
     # Дополнительные утилиты
     "calculate_overall_risk_score",
