@@ -6,6 +6,14 @@
 
 import json
 import asyncio
+try:
+    from langchain_gigachat import GigaChat
+    GIGACHAT_AVAILABLE = True
+except ImportError:
+    GIGACHAT_AVAILABLE = False
+    GigaChat = None
+
+from .llm_config_manager import LLMProvider
 from typing import Dict, List, Optional, Any, AsyncGenerator
 
 from dataclasses import dataclass
@@ -900,6 +908,193 @@ class RiskAnalysisLLMClient(LLMClient):
         
         return response
 
+class GigaChatLLMClient(LLMClient):
+    """Специализированный клиент для работы с GigaChat через langchain_gigachat"""
+    
+    def __init__(self, config: Optional[LLMConfig] = None):
+        # НЕ вызываем super().__init__() так как не используем httpx для GigaChat
+        self.config = config or LLMConfig.from_manager()
+        
+        if not GIGACHAT_AVAILABLE:
+            raise ImportError(
+                "langchain_gigachat не установлен! Установите: pip install langchain-gigachat"
+            )
+        
+        if self.config.provider != LLMProvider.GIGACHAT:
+            raise ValueError("GigaChatLLMClient требует provider=GIGACHAT")
+        
+        # Проверяем наличие сертификатов
+        if not (self.config.cert_file and self.config.key_file):
+            raise ValueError("Для GigaChat необходимы cert_file и key_file")
+        
+        # Создаем GigaChat клиент
+        self.gigachat = GigaChat(
+            base_url=self.config.base_url,
+            cert_file=self.config.cert_file,
+            key_file=self.config.key_file,
+            model=self.config.model,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            verify_ssl_certs=self.config.verify_ssl_certs,
+            profanity_check=self.config.profanity_check,
+            streaming=self.config.streaming
+        )
+        
+        # Статистика
+        self.total_requests = 0
+        self.total_tokens = 0
+        self.error_count = 0
+    
+    async def health_check(self) -> bool:
+        """Проверка доступности GigaChat"""
+        try:
+            # Простой тестовый запрос
+            response = self.gigachat.invoke("Привет")
+            return bool(response and len(response.content) > 0)
+        except Exception:
+            return False
+    
+    async def get_available_models(self) -> List[str]:
+        """Получение списка доступных моделей для GigaChat"""
+        # GigaChat обычно поддерживает фиксированный набор моделей
+        return ["GigaChat", "GigaChat-Pro", "GigaChat-Max"]
+    
+    async def complete_chat(
+        self,
+        messages: List[LLMMessage],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        stream: bool = False
+    ) -> LLMResponse:
+        """Выполнение chat completion через GigaChat"""
+        
+        try:
+            self.total_requests += 1
+            
+            # Формируем единый промпт из сообщений для GigaChat
+            prompt = self._format_messages_for_gigachat(messages)
+            
+            # Временно изменяем параметры модели если нужно
+            original_temp = self.gigachat.temperature
+            original_model = self.gigachat.model
+            
+            if temperature is not None:
+                self.gigachat.temperature = temperature
+            if model is not None:
+                self.gigachat.model = model
+            
+            try:
+                # Выполняем запрос
+                response = self.gigachat.invoke(prompt)
+                
+                # Извлекаем контент
+                if hasattr(response, 'content'):
+                    content = response.content
+                else:
+                    content = str(response)
+                
+                # Примерная оценка токенов (так как GigaChat может не возвращать точное число)
+                estimated_tokens = len(prompt.split()) + len(content.split())
+                self.total_tokens += estimated_tokens
+                
+                return LLMResponse(
+                    content=content,
+                    finish_reason="stop",
+                    usage={"total_tokens": estimated_tokens, "estimated": True},
+                    model=model or self.config.model,
+                    created=datetime.now()
+                )
+                
+            finally:
+                # Восстанавливаем оригинальные параметры
+                self.gigachat.temperature = original_temp
+                self.gigachat.model = original_model
+                
+        except Exception as e:
+            self.error_count += 1
+            raise LLMError(f"Ошибка GigaChat: {str(e)}")
+    
+    def _format_messages_for_gigachat(self, messages: List[LLMMessage]) -> str:
+        """Форматирование сообщений в единый промпт для GigaChat"""
+        formatted_parts = []
+        
+        for message in messages:
+            role = message.role
+            content = message.content
+            
+            if role == "system":
+                formatted_parts.append(f"Системная инструкция: {content}")
+            elif role == "user":
+                formatted_parts.append(f"Пользователь: {content}")
+            elif role == "assistant":
+                formatted_parts.append(f"Ассистент: {content}")
+            else:
+                formatted_parts.append(content)
+        
+        return "\n\n".join(formatted_parts)
+    
+    async def simple_completion(self, prompt: str, **kwargs) -> str:
+        """Простой интерфейс для получения ответа на промпт"""
+        try:
+            response = self.gigachat.invoke(prompt)
+            return response.content if hasattr(response, 'content') else str(response)
+        except Exception as e:
+            raise LLMError(f"Ошибка GigaChat простого запроса: {str(e)}")
+    
+    async def extract_structured_data(
+        self,
+        data_to_analyze: str,
+        extraction_prompt: str,
+        expected_format: str = "JSON",
+        max_attempts: int = 3
+    ) -> Dict[str, Any]:
+        """Извлечение структурированных данных через GigaChat"""
+        
+        system_prompt = f"""Ты - эксперт по анализу данных. 
+
+        Твоя задача: {extraction_prompt}
+
+        КРИТИЧЕСКИ ВАЖНЫЕ ТРЕБОВАНИЯ:
+        - Отвечай ТОЛЬКО валидным {expected_format} без дополнительного текста
+        - НЕ добавляй комментарии, пояснения, теги <think> или markdown блоки
+        - Если данных недостаточно, используй разумные значения по умолчанию
+        - Строго следуй указанной структуре данных
+        - Все числовые поля ОБЯЗАТЕЛЬНО должны быть числами, не строками
+        - Все обязательные поля должны присутствовать
+        - НЕ используй запятые в конце объектов или массивов
+
+        СТРОГО: отвечай только JSON, начинающийся с {{ и заканчивающийся }}"""
+
+        last_error = None
+        
+        for attempt in range(max_attempts):
+            try:
+                messages = [LLMMessage(role="user", content=f"{system_prompt}\n\nДанные для анализа:\n{data_to_analyze}")]
+                response = await self.complete_chat(messages, temperature=0.05 if attempt == 0 else 0.1)
+                
+                # Используем тот же парсер что и в базовом классе
+                parsed_result = self._ultra_robust_json_parser(response.content)
+                validated_result = self._validate_and_fix_json_structure(parsed_result)
+                
+                return validated_result
+                
+            except Exception as e:
+                last_error = e
+                
+                if attempt < max_attempts - 1:
+                    # Небольшая пауза перед повтором
+                    await asyncio.sleep(1 + attempt)
+                else:
+                    # Последняя попытка не удалась - возвращаем fallback
+                    return self._create_emergency_fallback_result(extraction_prompt, str(e))
+        
+        return self._create_emergency_fallback_result(extraction_prompt, str(last_error))
+    
+    async def close(self):
+        """Закрытие клиента GigaChat"""
+        # GigaChat клиент из langchain не требует явного закрытия
+        pass
 
 # ===============================
 # Фабрика клиентов
@@ -913,16 +1108,10 @@ def create_llm_client(
 ) -> LLMClient:
     """
     Фабрика для создания LLM клиентов
-    ОБНОВЛЕНО: Использует центральный конфигуратор
-    
-    Args:
-        client_type: Тип клиента (standard, risk_analysis)
-        base_url: URL LLM сервера (None = из конфигуратора)
-        model: Модель для использования (None = из конфигуратора)  
-        temperature: Температура генерации (None = из конфигуратора)
+    ОБНОВЛЕНО: Поддержка GigaChat
     """
     
-    # ИЗМЕНЕНО: Создаем конфигурацию из центрального менеджера
+    # Получаем конфигурацию из центрального менеджера
     overrides = {}
     if base_url is not None:
         overrides['base_url'] = base_url
@@ -933,10 +1122,16 @@ def create_llm_client(
     
     config = LLMConfig.from_manager(**overrides)
     
-    if client_type == "risk_analysis":
-        return RiskAnalysisLLMClient(config)
+    # Определяем какой клиент создавать
+    if config.provider == LLMProvider.GIGACHAT:
+        # Для GigaChat всегда используем специализированный клиент
+        return GigaChatLLMClient(config)
     else:
-        return LLMClient(config)
+        # Для LM Studio и OpenAI используем обычные клиенты
+        if client_type == "risk_analysis":
+            return RiskAnalysisLLMClient(config)
+        else:
+            return LLMClient(config)
 
 
 # ===============================
@@ -949,17 +1144,34 @@ _global_client: Optional[LLMClient] = None
 async def get_llm_client() -> LLMClient:
     """
     Получение глобального LLM клиента
-    ОБНОВЛЕНО: Использует центральный конфигуратор
+    ОБНОВЛЕНО: Поддержка GigaChat
     """
     global _global_client
     
     if _global_client is None:
-        # ИЗМЕНЕНО: Используем центральный конфигуратор вместо прямого чтения env
         config = LLMConfig.from_manager()
-        _global_client = LLMClient(config)
+        
+        # Создаем клиент в зависимости от провайдера
+        if config.provider == LLMProvider.GIGACHAT:
+            _global_client = GigaChatLLMClient(config)
+        else:
+            _global_client = LLMClient(config)
         
         # Проверяем доступность
         if not await _global_client.health_check():
-            raise LLMError("LLM сервер недоступен. Убедитесь, что LM Studio запущен на localhost:1234")
+            provider_name = config.provider.value
+            raise LLMError(f"{provider_name} сервер недоступен. Проверьте настройки подключения.")
     
     return _global_client
+
+__all__ = [
+    "LLMClient",
+    "GigaChatLLMClient",  # ← ДОБАВИТЬ ЭТУ СТРОКУ
+    "RiskAnalysisLLMClient", 
+    "LLMConfig",
+    "LLMMessage",
+    "LLMResponse",
+    "LLMError",
+    "create_llm_client",
+    "get_llm_client"
+]
