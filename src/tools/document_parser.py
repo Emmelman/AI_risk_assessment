@@ -774,7 +774,68 @@ class TextDocumentParser(BaseDocumentParser):
                 classes.append(match.group(0))
         
         return "\n".join(classes)
-
+    
+    def _normalize_section_name(self, heading_text: str) -> str:
+        """Нормализация названия секции"""
+        # Убираем номера и специальные символы
+        normalized = re.sub(r'^\d+\.?\s*', '', heading_text)
+        normalized = re.sub(r'[:\.]$', '', normalized)
+        normalized = normalized.lower().strip()
+        
+        # Маппинг на стандартные названия секций
+        section_mapping = {
+            'общая информация': 'general_info',
+            'общие сведения': 'general_info', 
+            'описание': 'description',
+            'назначение': 'purpose',
+            'техническая спецификация': 'technical_spec',
+            'технические характеристики': 'technical_spec',
+            'архитектура': 'architecture',
+            'промпты': 'prompts',
+            'инструкции': 'instructions',
+            'системные промпты': 'system_prompts',
+            'ограничения': 'guardrails',
+            'меры безопасности': 'guardrails',
+            'бизнес-контекст': 'business_context',
+            'целевая аудитория': 'target_audience',
+            'риски': 'risks',
+            'безопасность': 'security',
+            'интеграции': 'integrations',
+            'api': 'integrations',
+            'данные': 'data_access',
+            'персональные данные': 'data_access',
+            # Английские варианты
+            'general information': 'general_info',
+            'description': 'description',
+            'purpose': 'purpose',
+            'technical specification': 'technical_spec',
+            'architecture': 'architecture',
+            'prompts': 'prompts',
+            'instructions': 'instructions',
+            'system prompts': 'system_prompts',
+            'limitations': 'guardrails',
+            'guardrails': 'guardrails',
+            'security measures': 'guardrails',
+            'business context': 'business_context',
+            'target audience': 'target_audience',
+            'risks': 'risks',
+            'security': 'security',
+            'integrations': 'integrations',
+            'api': 'integrations',
+            'data': 'data_access',
+            'personal data': 'data_access',
+            # README.md специфичные секции
+            'installation': 'installation',
+            'usage': 'usage',
+            'examples': 'examples',
+            'contributing': 'contributing',
+            'license': 'license',
+            'changelog': 'changelog',
+            'features': 'features',
+            'requirements': 'requirements'
+        }
+        
+        return section_mapping.get(normalized, normalized.replace(' ', '_'))
 
 # ===============================
 # Главный парсер документов

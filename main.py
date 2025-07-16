@@ -26,6 +26,8 @@ from src.workflow import create_workflow_from_env
 from src.models.database import get_db_manager
 from src.utils.logger import setup_logging, get_logger
 
+# ===== НОВОЕ: Интеграция рассуждений =====
+from src.utils.reasoning_integration import enable_all_reasoning, setup_reasoning_env
 
 console = Console()
 
@@ -33,21 +35,29 @@ console = Console()
 @click.group()
 @click.option('--log-level', default='INFO', help='Уровень логирования')
 @click.option('--log-file', default='logs/ai_risk_assessment.log', help='Файл логов')
+@click.option('--show-reasoning/--no-reasoning', default=True, help='Показывать рассуждения агентов')
 @click.pass_context
-def cli(ctx, log_level, log_file):
+def cli(ctx, log_level, log_file, show_reasoning):
     """🤖 Система оценки рисков ИИ-агентов"""
     ctx.ensure_object(dict)
+    
+    # ===== НОВОЕ: Настройка рассуждений =====
+    if show_reasoning:
+        setup_reasoning_env()
+        enable_all_reasoning()
     
     # Настраиваем логирование
     setup_logging(log_level=log_level, log_file=log_file)
     logger = get_logger()
     
     ctx.obj['logger'] = logger
+    ctx.obj['show_reasoning'] = show_reasoning
     
     # Красивый заголовок
     console.print(Panel.fit(
         "[bold blue]🤖 Система оценки рисков ИИ-агентов[/bold blue]\n"
-        "Мультиагентная система на базе LangGraph",
+        "Мультиагентная система на базе LangGraph\n"
+        f"{'🧠 Рассуждения агентов: ВКЛЮЧЕНЫ' if show_reasoning else '🔇 Рассуждения агентов: ВЫКЛЮЧЕНЫ'}",
         title="AI Risk Assessment System",
         border_style="blue"
     ))
@@ -64,15 +74,21 @@ def cli(ctx, log_level, log_file):
 async def assess(ctx, source_files, agent_name, output, quality_threshold, max_retries, model):
     """Запуск оценки рисков ИИ-агента"""
     logger = ctx.obj['logger']
+    show_reasoning = ctx.obj.get('show_reasoning', True)
     
     # Проверяем входные файлы
     validated_files = []
     for file_path in source_files:
         path = Path(file_path)
         if path.exists():
-            validated_files.append(str(path.absolute()))
+            if path.is_dir():
+                # Если папка, берем все файлы
+                for ext in ['*.py', '*.js', '*.java', '*.txt', '*.md', '*.json', '*.yaml']:
+                    validated_files.extend([str(f) for f in path.rglob(ext)])
+            else:
+                validated_files.append(str(path.absolute()))
         else:
-            console.print(f"[red]❌ Файл не найден: {file_path}[/red]")
+            console.print(f"[red]❌ Файл/папка не найдена: {file_path}[/red]")
             return
     
     if not validated_files:
@@ -80,8 +96,13 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
         return
     
     console.print(f"[green]📁 Найдено файлов для анализа: {len(validated_files)}[/green]")
-    for file_path in validated_files:
+    
+    # Показываем первые 10 файлов для подтверждения
+    for i, file_path in enumerate(validated_files[:10]):
         console.print(f"  • {file_path}")
+    
+    if len(validated_files) > 10:
+        console.print(f"  ... и еще {len(validated_files) - 10} файлов")
     
     # Создаем workflow
     try:
@@ -96,6 +117,9 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
             return
         
         console.print("[green]✅ LLM сервер доступен[/green]")
+        
+        if show_reasoning:
+            console.print("[blue]🧠 Рассуждения агентов будут отображаться в реальном времени[/blue]")
         
     except Exception as e:
         console.print(f"[red]❌ Ошибка инициализации: {e}[/red]")
@@ -119,6 +143,26 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
                 assessment_id=assessment_id
             )
             
+            print("\n🔍 DEBUG: Анализ результата workflow:")
+            print(f"result.keys(): {list(result.keys())}")
+            print(f"result['success']: {result.get('success')}")
+            print(f"result['current_step']: {result.get('current_step')}")
+
+            final_assessment = result.get("final_assessment")
+            if final_assessment:
+                print(f"final_assessment.keys(): {list(final_assessment.keys())}")
+                print(f"final_assessment['assessment_id']: {final_assessment.get('assessment_id')}")
+                print(f"final_assessment['overall_risk_level']: {final_assessment.get('overall_risk_level')}")
+                print(f"final_assessment['overall_risk_score']: {final_assessment.get('overall_risk_score')}")
+                
+                risk_evaluations = final_assessment.get("risk_evaluations", {})
+                print(f"risk_evaluations.keys(): {list(risk_evaluations.keys()) if risk_evaluations else 'None'}")
+                
+                recommendations = final_assessment.get("priority_recommendations", [])
+                print(f"recommendations count: {len(recommendations) if recommendations else 0}")
+            else:
+                print("final_assessment: None")
+
             progress.update(task, completed=True)
             
             if result["success"]:
@@ -137,6 +181,43 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
             progress.update(task, description="❌ Ошибка выполнения")
             console.print(f"\n[red]❌ Неожиданная ошибка: {e}[/red]")
             logger.bind_context(assessment_id, "cli").error(f"Ошибка CLI: {e}")
+
+
+# ===== НОВОЕ: Команда для тестирования БД =====
+@cli.command()
+@click.pass_context
+async def test_db(ctx):
+    """Проверка состояния базы данных"""
+    try:
+        console.print("[blue]🗄️ Проверка базы данных...[/blue]")
+        
+        db_manager = await get_db_manager()
+        console.print("[green]✅ Подключение к БД успешно[/green]")
+        
+        # Простая статистика
+        from sqlalchemy import text
+        async with db_manager.async_session() as session:
+            
+            tables = ['agent_profiles', 'risk_assessments', 'risk_evaluations']
+            
+            stats_table = Table(title="📊 Статистика БД")
+            stats_table.add_column("Таблица", style="cyan")
+            stats_table.add_column("Записей", style="white")
+            
+            for table in tables:
+                try:
+                    result = await session.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                    count = result.scalar()
+                    stats_table.add_row(table, str(count))
+                except Exception as e:
+                    stats_table.add_row(table, f"Ошибка: {str(e)[:30]}")
+            
+            console.print(stats_table)
+        
+        await db_manager.close()
+        
+    except Exception as e:
+        console.print(f"[red]❌ Ошибка БД: {e}[/red]")
 
 
 @cli.command()
@@ -166,63 +247,68 @@ async def list_assessments(ctx, limit):
     """Список последних оценок"""
     try:
         db_manager = await get_db_manager()
-        profiles = await db_manager.list_agent_profiles(limit=limit)
         
-        if not profiles:
-            console.print("[yellow]📭 Нет сохраненных оценок[/yellow]")
-            return
+        # Используем простой способ получения оценок
+        from sqlalchemy import select, desc
+        from src.models.database import RiskAssessmentDB
         
-        table = Table(title="🤖 Последние оценки ИИ-агентов")
-        table.add_column("ID", style="cyan")
-        table.add_column("Имя агента", style="green")
-        table.add_column("Тип", style="blue")
-        table.add_column("Дата обновления", style="dim")
-        
-        for profile in profiles:
-            table.add_row(
-                profile["id"][:8] + "...",
-                profile["name"],
-                profile["agent_type"],
-                profile["updated_at"].strftime("%Y-%m-%d %H:%M")
-            )
-        
-        console.print(table)
-        
-        # Показываем детали по первой оценке
-        if profiles:
-            first_profile = profiles[0]
-            assessments = await db_manager.get_assessments_for_agent(first_profile["id"], limit=1)
+        async with db_manager.async_session() as session:
+            stmt = select(RiskAssessmentDB).order_by(desc(RiskAssessmentDB.assessment_timestamp)).limit(limit)
+            result = await session.execute(stmt)
+            assessments = result.scalars().all()
             
-            if assessments:
-                latest = assessments[0]
-                console.print(f"\n[dim]💡 Для подробностей используйте: python main.py show {latest['id']}[/dim]")
+            if not assessments:
+                console.print("[yellow]📭 Нет сохраненных оценок[/yellow]")
+                return
+            
+            table = Table(title=f"📋 Последние {len(assessments)} оценок")
+            table.add_column("ID", style="cyan")
+            table.add_column("Уровень риска", style="white")
+            table.add_column("Балл", style="white")
+            table.add_column("Дата", style="green")
+            
+            for assessment in assessments:
+                risk_level = assessment.overall_risk_level
+                color = {
+                    "low": "green",
+                    "medium": "yellow", 
+                    "high": "red"
+                }.get(risk_level, "white")
+                
+                table.add_row(
+                    assessment.id[:8] + "...",
+                    f"[{color}]{risk_level.upper()}[/{color}]",
+                    str(assessment.overall_risk_score),
+                    str(assessment.assessment_timestamp)[:19]
+                )
+            
+            console.print(table)
+        
+        await db_manager.close()
         
     except Exception as e:
         console.print(f"[red]❌ Ошибка получения списка: {e}[/red]")
 
 
 @cli.command()
-@click.option('--check-llm', is_flag=True, help='Проверить доступность LLM')
+@click.option('--check-llm', is_flag=True, help='Проверить LLM сервер')
 @click.option('--check-db', is_flag=True, help='Проверить базу данных')
 @click.pass_context
 async def status(ctx, check_llm, check_db):
     """Проверка статуса системы"""
-    console.print("[blue]🔍 Проверка статуса системы...[/blue]\n")
-    
     results = []
     
     # Проверка LLM
     if check_llm or not (check_db):
         try:
-            workflow = create_workflow_from_env()
-            llm_healthy = await workflow.profiler.health_check()
+            from src.utils.llm_client import get_llm_client
+            client = await get_llm_client()
             
-            if llm_healthy:
+            if await client.health_check():
                 results.append(("✅ LLM сервер", "Доступен", "green"))
                 
-                # Получаем модели
                 try:
-                    models = await workflow.profiler.llm_client.get_available_models()
+                    models = await client.list_models()
                     results.append(("📋 Доступные модели", f"{len(models)} моделей", "blue"))
                 except:
                     results.append(("📋 Доступные модели", "Недоступно", "yellow"))
@@ -236,15 +322,19 @@ async def status(ctx, check_llm, check_db):
     if check_db or not (check_llm):
         try:
             db_manager = await get_db_manager()
-            profiles = await db_manager.list_agent_profiles(limit=1)
             results.append(("✅ База данных", "Доступна", "green"))
             
             # Статистика
             try:
-                total_profiles = len(await db_manager.list_agent_profiles(limit=1000))
-                results.append(("📊 Агентов в БД", str(total_profiles), "blue"))
+                from sqlalchemy import text
+                async with db_manager.async_session() as session:
+                    result = await session.execute(text("SELECT COUNT(*) FROM risk_assessments"))
+                    count = result.scalar()
+                    results.append(("📊 Оценок в БД", str(count), "blue"))
             except:
-                results.append(("📊 Агентов в БД", "Недоступно", "yellow"))
+                results.append(("📊 Оценок в БД", "Недоступно", "yellow"))
+                
+            await db_manager.close()
                 
         except Exception as e:
             results.append(("❌ База данных", f"Ошибка: {str(e)[:50]}", "red"))
@@ -259,6 +349,8 @@ async def status(ctx, check_llm, check_db):
     
     console.print(table)
 
+
+# Замените demo команду в main.py на эту версию:
 
 @cli.command()
 @click.pass_context
@@ -323,24 +415,35 @@ class DemoAgent:
 - Требует подтверждения для сложных операций
 '''
     
-    # Сохраняем тестовые файлы
-    (demo_dir / "demo_agent.py").write_text(test_agent_code, encoding='utf-8')
-    (demo_dir / "description.txt").write_text(test_description, encoding='utf-8')
-    
-    console.print(f"[green]📁 Созданы тестовые файлы в {demo_dir}[/green]")
-    
-    # Запускаем оценку
-    demo_files = [str(demo_dir / "demo_agent.py"), str(demo_dir / "description.txt")]
-    
     try:
+        # Сохраняем тестовые файлы
+        (demo_dir / "demo_agent.py").write_text(test_agent_code, encoding='utf-8')
+        (demo_dir / "description.txt").write_text(test_description, encoding='utf-8')
+        
+        console.print(f"[green]📁 Созданы тестовые файлы в {demo_dir}[/green]")
+        
+        # Запускаем оценку напрямую через workflow (БЕЗ рекурсии!)
+        demo_files = [str(demo_dir / "demo_agent.py"), str(demo_dir / "description.txt")]
+        
+        console.print("[blue]📊 Запускаем демонстрационную оценку...[/blue]\n")
+        
+        # Создаем workflow
         workflow = create_workflow_from_env()
+        
+        # Проверяем LLM
+        llm_healthy = await workflow.profiler.health_check()
+        if not llm_healthy:
+            console.print("[red]❌ LM Studio недоступен. Запустите LM Studio с моделью qwen3-4b[/red]")
+            return
         
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
             task = progress.add_task("🔄 Демонстрационная оценка...", total=None)
             
+            # Запускаем workflow напрямую
             result = await workflow.run_assessment(
                 source_files=demo_files,
-                agent_name="DemoAgent"
+                agent_name="DemoAgent",
+                assessment_id=f"demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             )
             
             progress.update(task, completed=True)
@@ -353,92 +456,151 @@ class DemoAgent:
                 
     except Exception as e:
         console.print(f"\n[red]❌ Ошибка демонстрации: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
     
-    # Очищаем тестовые файлы
-    try:
-        import shutil
-        shutil.rmtree(demo_dir)
-        console.print(f"[dim]🗑️ Очищены временные файлы[/dim]")
-    except:
-        pass
+    finally:
+        # Очищаем тестовые файлы
+        try:
+            import shutil
+            if demo_dir.exists():
+                shutil.rmtree(demo_dir)
+                console.print(f"[dim]🗑️ Очищены временные файлы[/dim]")
+        except:
+            pass
 
 
-# ===============================
-# Вспомогательные функции
-# ===============================
+# Вспомогательные функции для отображения результатов
+# Исправленная функция для main.py
+# Найдите и замените функцию _display_assessment_result
 
-async def _display_assessment_result(result: dict, output_file: Optional[str] = None):
-    """Отображение результата оценки"""
-    assessment = result.get("final_assessment")
+async def _display_assessment_result(result, output_file=None):
+    """ИСПРАВЛЕННОЕ отображение результатов оценки"""
+    
+    # ИСПРАВЛЕНИЕ: проверяем разные возможные ключи
+    assessment = result.get("final_assessment") or result.get("assessment")
+    
     if not assessment:
-        console.print("[red]❌ Отсутствуют данные оценки[/red]")
+        console.print("[red]❌ Нет данных для отображения[/red]")
+        console.print(f"[dim]DEBUG: Доступные ключи в result: {list(result.keys())}[/dim]")
+        
+        # Пытаемся отобразить хотя бы базовую информацию из result
+        if result.get("success"):
+            assessment_id = result.get("assessment_id", "unknown")
+            processing_time = result.get("processing_time", 0)
+            console.print(f"[yellow]Assessment ID: {assessment_id}[/yellow]")
+            console.print(f"[yellow]Время выполнения: {processing_time:.1f} секунд[/yellow]")
+            console.print("[yellow]⚠️ Детальные результаты недоступны[/yellow]")
         return
     
+    # Извлекаем данные с fallback значениями
+    assessment_id = assessment.get('assessment_id', result.get('assessment_id', 'unknown'))
+    overall_risk_level = assessment.get('overall_risk_level', 'unknown')
+    overall_risk_score = assessment.get('overall_risk_score', 0)
+    processing_time = assessment.get('processing_time_seconds', result.get('processing_time', 0))
+    
     # Основная информация
-    console.print("\n" + "="*60)
-    console.print(Panel.fit(
-        f"[bold green]✅ Оценка завершена[/bold green]\n"
-        f"ID: {result['assessment_id']}\n"
-        f"Время: {result.get('processing_time', 0):.1f}с",
-        title="Результат оценки",
+    console.print(Panel(
+        f"[bold green]🎯 Оценка завершена успешно![/bold green]\n\n"
+        f"Assessment ID: {assessment_id}\n"
+        f"Общий уровень риска: [bold]{overall_risk_level.upper()}[/bold]\n"
+        f"Общий балл: {overall_risk_score}/25\n"
+        f"Время обработки: {processing_time:.1f} секунд",
+        title="📊 Результаты оценки",
         border_style="green"
     ))
     
-    # Информация об агенте
-    agent_info = assessment.get("agent_profile", {})
-    console.print(f"\n[bold blue]🤖 Агент: {agent_info.get('name', 'Unknown')}[/bold blue]")
-    console.print(f"Тип: {agent_info.get('agent_type', 'unknown')}")
-    console.print(f"Описание: {agent_info.get('description', 'Не указано')[:100]}...")
-    
-    # Общий результат
-    overall_score = assessment.get("overall_risk_score", 0)
-    overall_level = assessment.get("overall_risk_level", "unknown")
-    
-    level_colors = {"low": "green", "medium": "yellow", "high": "red"}
-    level_color = level_colors.get(overall_level, "white")
-    
-    console.print(f"\n[bold]📊 Общий риск: [{level_color}]{overall_level.upper()}[/{level_color}] ({overall_score}/25)[/bold]")
-    
-    # Таблица рисков
+    # Детальные оценки рисков
     risk_evaluations = assessment.get("risk_evaluations", {})
     if risk_evaluations:
-        table = Table(title="Детализация по типам рисков")
-        table.add_column("Тип риска", style="bold")
-        table.add_column("Балл", justify="center")
-        table.add_column("Уровень", justify="center")
-        table.add_column("Вероятность", justify="center")
-        table.add_column("Воздействие", justify="center")
+        table = Table(title="🔍 Детальные оценки рисков")
+        table.add_column("Тип риска", style="cyan")
+        table.add_column("Балл", style="white")
+        table.add_column("Уровень", style="white")
+        table.add_column("Детали", style="dim")
         
+        # Названия рисков для отображения
         risk_names = {
-            "ethical": "Этические",
-            "stability": "Стабильность", 
-            "security": "Безопасность",
-            "autonomy": "Автономность",
-            "regulatory": "Регуляторные",
-            "social": "Социальные"
+            'ethical': 'Этические риски',
+            'social': 'Социальные риски', 
+            'security': 'Безопасность данных',
+            'stability': 'Стабильность LLM',
+            'autonomy': 'Автономность',
+            'regulatory': 'Регуляторные риски'
         }
         
         for risk_type, evaluation in risk_evaluations.items():
             risk_name = risk_names.get(risk_type, risk_type)
-            level = evaluation.get("risk_level", "unknown")
-            level_color = level_colors.get(level, "white")
             
-            table.add_row(
-                risk_name,
-                str(evaluation.get("total_score", 0)),
-                f"[{level_color}]{level}[/{level_color}]",
-                str(evaluation.get("probability_score", 0)),
-                str(evaluation.get("impact_score", 0))
-            )
+            if isinstance(evaluation, dict):
+                level = evaluation.get('risk_level', 'unknown')
+                total_score = evaluation.get('total_score', 0)
+                prob_score = evaluation.get('probability_score', 0)
+                impact_score = evaluation.get('impact_score', 0)
+                
+                color = {
+                    'low': 'green',
+                    'medium': 'yellow',
+                    'high': 'red'
+                }.get(level, 'white')
+                
+                table.add_row(
+                    risk_name,
+                    f"{total_score}/25",
+                    f"[{color}]{level.upper()}[/{color}]",
+                    f"P:{prob_score}/5 × I:{impact_score}/5"
+                )
+            else:
+                table.add_row(
+                    risk_name,
+                    "N/A",
+                    "[dim]ОШИБКА[/dim]",
+                    "Неверный формат данных"
+                )
         
         console.print(table)
+    else:
+        console.print("[yellow]⚠️ Детальные оценки рисков недоступны[/yellow]")
     
     # Рекомендации
     recommendations = assessment.get("priority_recommendations", [])
     if recommendations:
-        console.print("\n[bold blue]💡 Приоритетные рекомендации:[/bold blue]")
-        for i, rec in enumerate(recommendations[:5], 1):
+        console.print("\n[bold green]💡 Приоритетные рекомендации:[/bold green]")
+        for i, rec in enumerate(recommendations[:10], 1):  # Показываем до 10 рекомендаций
             console.print(f"  {i}. {rec}")
+    else:
+        console.print("\n[yellow]⚠️ Рекомендации недоступны[/yellow]")
+    
+    # Показываем сводку по качеству (если доступна)
+    eval_summary = assessment.get("evaluation_summary", {})
+    if eval_summary:
+        success_rate = eval_summary.get("success_rate", 0)
+        successful_count = eval_summary.get("successful_evaluations", 0)
+        total_count = eval_summary.get("total_evaluations", 6)
+        
+        console.print(f"\n[bold blue]📈 Качество оценки:[/bold blue]")
+        console.print(f"  • Успешных оценок: {successful_count}/{total_count} ({success_rate:.1%})")
+        
+        if success_rate >= 0.8:
+            console.print("  • [green]🏆 Отличное качество результатов![/green]")
+        elif success_rate >= 0.5:
+            console.print("  • [yellow]👍 Хорошее качество результатов[/yellow]")
+        else:
+            console.print("  • [red]⚠️ Низкое качество результатов[/red]")
+    
+    # Сводка по найденным проблемам 
+    highest_risks = []
+    if risk_evaluations:
+        for risk_type, evaluation in risk_evaluations.items():
+            if isinstance(evaluation, dict):
+                score = evaluation.get('total_score', 0)
+                if score > 15:  # High risk
+                    highest_risks.append(f"{risk_names.get(risk_type, risk_type)} ({score}/25)")
+    
+    if highest_risks:
+        console.print(f"\n[bold red]⚠️ Области высокого риска:[/bold red]")
+        for risk in highest_risks:
+            console.print(f"  • {risk}")
     
     # Сохранение в файл
     if output_file:
@@ -446,91 +608,30 @@ async def _display_assessment_result(result: dict, output_file: Optional[str] = 
             output_path = Path(output_file)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2, default=str)
-            
-            console.print(f"\n[green]💾 Результат сохранен в {output_file}[/green]")
-        except Exception as e:
-            console.print(f"\n[red]❌ Ошибка сохранения: {e}[/red]")
-
-
-async def _display_saved_assessment(assessment_data: dict, output_file: Optional[str] = None):
-    """Отображение сохраненной оценки"""
-    assessment = assessment_data.get("assessment")
-    evaluations = assessment_data.get("evaluations", [])
-    
-    if not assessment:
-        console.print("[red]❌ Данные оценки повреждены[/red]")
-        return
-    
-    # Основная информация
-    console.print(Panel.fit(
-        f"[bold blue]📋 Сохраненная оценка[/bold blue]\n"
-        f"ID: {assessment.id}\n"
-        f"Дата: {assessment.assessment_timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"Общий риск: {assessment.overall_risk_level} ({assessment.overall_risk_score}/25)",
-        title="Детали оценки",
-        border_style="blue"
-    ))
-    
-    # Таблица рисков из БД
-    if evaluations:
-        table = Table(title="Сохраненные оценки рисков")
-        table.add_column("Тип риска", style="bold")
-        table.add_column("Балл", justify="center")
-        table.add_column("Уровень", justify="center")
-        table.add_column("Агент-оценщик", style="dim")
-        
-        level_colors = {"low": "green", "medium": "yellow", "high": "red"}
-        
-        for eval_record in evaluations:
-            level_color = level_colors.get(eval_record.risk_level, "white")
-            table.add_row(
-                eval_record.risk_type,
-                str(eval_record.total_score),
-                f"[{level_color}]{eval_record.risk_level}[/{level_color}]",
-                eval_record.evaluator_agent
-            )
-        
-        console.print(table)
-    
-    # Рекомендации
-    if assessment.priority_recommendations:
-        console.print("\n[bold blue]💡 Рекомендации:[/bold blue]")
-        for i, rec in enumerate(assessment.priority_recommendations, 1):
-            console.print(f"  {i}. {rec}")
-    
-    # Сохранение в файл
-    if output_file:
-        try:
-            output_data = {
-                "assessment": {
-                    "id": assessment.id,
-                    "timestamp": assessment.assessment_timestamp.isoformat(),
-                    "overall_risk_score": assessment.overall_risk_score,
-                    "overall_risk_level": assessment.overall_risk_level,
-                    "recommendations": assessment.priority_recommendations
+            # Сохраняем весь результат
+            save_data = {
+                "assessment": assessment,
+                "metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "version": "1.0",
+                    "tool": "AI_Risk_Assessment",
+                    "assessment_id": assessment_id
                 },
-                "evaluations": [
-                    {
-                        "risk_type": e.risk_type,
-                        "total_score": e.total_score,
-                        "risk_level": e.risk_level,
-                        "reasoning": e.probability_reasoning + " " + e.impact_reasoning
-                    }
-                    for e in evaluations
-                ]
+                "raw_result": result  # Включаем полный результат для отладки
             }
             
-            output_path = Path(output_file)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
             with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(output_data, f, ensure_ascii=False, indent=2)
+                json.dump(save_data, f, ensure_ascii=False, indent=2, default=str)
             
-            console.print(f"\n[green]💾 Оценка сохранена в {output_file}[/green]")
+            console.print(f"\n[green]💾 Результаты сохранены в {output_file}[/green]")
         except Exception as e:
             console.print(f"\n[red]❌ Ошибка сохранения: {e}[/red]")
+
+
+async def _display_saved_assessment(assessment_data, output_file=None):
+    """Отображение сохраненной оценки"""
+    console.print("[blue]📋 Информация из базы данных[/blue]")
+    # Здесь можно добавить логику отображения сохраненных данных
 
 
 def main():
@@ -550,18 +651,20 @@ def main():
 
 
 if __name__ == "__main__":
-    # Запускаем асинхронный CLI
     import asyncio
     
-    # Патчим click для поддержки async
-    def async_command(f):
-        f = asyncio.coroutine(f)
+    # ИСПРАВЛЕННЫЙ патч для async команд
+    def make_async(f):
         def wrapper(*args, **kwargs):
             return asyncio.run(f(*args, **kwargs))
         return wrapper
     
-    # Применяем патч к командам
-    for command in [assess, show, list_assessments, status, demo]:
-        command.callback = async_command(command.callback)
+    # Применяем патч
+    assess.callback = make_async(assess.callback)
+    show.callback = make_async(show.callback)
+    list_assessments.callback = make_async(list_assessments.callback)
+    status.callback = make_async(status.callback)
+    demo.callback = make_async(demo.callback)
+    # test_db.callback = make_async(test_db.callback)  # Пока закомментировано
     
     main()
