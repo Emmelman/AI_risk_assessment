@@ -12,12 +12,11 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 from datetime import datetime
 
 from loguru import logger
-from loguru._logger import Logger
 from rich.console import Console
 from rich.logging import RichHandler
 
-#if TYPE_CHECKING:
-    #from loguru import Logger
+if TYPE_CHECKING:
+    from loguru import Logger
 
 
 class RiskAssessmentLogger:
@@ -325,7 +324,7 @@ def setup_logging(
     return _global_logger
 
 
-def get_logger() -> Logger:
+def get_logger() -> RiskAssessmentLogger:
     """Получение глобального логгера"""
     global _global_logger
     
@@ -339,7 +338,7 @@ def get_logger() -> Logger:
             log_file=log_file
         )
     
-    return _global_logger.logger
+    return _global_logger
 
 
 # ===============================

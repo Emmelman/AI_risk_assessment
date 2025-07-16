@@ -43,16 +43,20 @@ class RiskAssessmentWorkflow:
     
     def __init__(
         self,
+        llm_base_url: str = "http://127.0.0.1:1234",
+        llm_model: str = "qwen3-4b",
         quality_threshold: float = 7.0,
         max_retries: int = 3
     ):
+        self.llm_base_url = llm_base_url
+        self.llm_model = llm_model
         self.quality_threshold = quality_threshold
         self.max_retries = max_retries
         
-        # Создаем агентов (используют центральный конфигуратор)
-        self.profiler = create_profiler_agent()
-        self.evaluators = create_all_evaluator_agents()
-        self.critic = create_critic_agent(quality_threshold)
+        # Создаем агентов
+        self.profiler = create_profiler_agent(llm_base_url, llm_model)
+        self.evaluators = create_all_evaluator_agents(llm_base_url, llm_model)
+        self.critic = create_critic_agent(llm_base_url, llm_model, quality_threshold)
         
         # Логгер для LangGraph
         self.graph_logger = get_langgraph_logger()
@@ -151,14 +155,6 @@ class RiskAssessmentWorkflow:
         
         print("🔍 ВСЕ УЗЛЫ ДОБАВЛЕНЫ")
 
-    def _profiler_router(self, state: WorkflowState) -> Literal["evaluation_preparation", "error_handling"]:
-        """Маршрутизатор после профайлера."""
-        if state.get("agent_profile"):
-            return "evaluation_preparation"
-        else:
-            return "error_handling"
-
-
     def _add_edges(self, workflow: StateGraph):
         """ДИАГНОСТИЧЕСКИЕ рёбра с print'ами"""
         
@@ -168,19 +164,9 @@ class RiskAssessmentWorkflow:
         print("  ✅ initialization → profiling")
         workflow.add_edge("initialization", "profiling")
         
-        #print("  ✅ profiling → evaluation_preparation")
-        #workflow.add_edge("profiling", "evaluation_preparation")
+        print("  ✅ profiling → evaluation_preparation")
+        workflow.add_edge("profiling", "evaluation_preparation")
         
-        print("  ✅ profiling → conditional_edges")
-        workflow.add_conditional_edges(
-            "profiling",
-            self._profiler_router,
-            {
-                "evaluation_preparation": "evaluation_preparation",
-                "error_handling": "error_handling"
-            }
-        )
-
         print("  ✅ evaluation_preparation → batch_1_evaluation")
         workflow.add_edge("evaluation_preparation", "batch_1_evaluation")
         
@@ -1366,13 +1352,6 @@ class RiskAssessmentWorkflow:
                 "assessment_id": initial_state.assessment_id
             }
     
-    def get_workflow_status(self) -> Dict[str, Any]:
-        """Возвращает статус готовности workflow."""
-        return {
-            "agents_ready": all([self.profiler, self.critic, self.evaluators]),
-            "graph_compiled": isinstance(self.graph, CompiledGraph)
-        }
-
     async def get_assessment_status(self, assessment_id: str) -> Dict[str, Any]:
         """Получение статуса оценки"""
         try:
@@ -1401,13 +1380,17 @@ class RiskAssessmentWorkflow:
 # ===============================
 
 def create_risk_assessment_workflow(
+    llm_base_url: str = "http://127.0.0.1:1234",
+    llm_model: str = "qwen3-4b",
     quality_threshold: float = 7.0,
     max_retries: int = 3
 ) -> RiskAssessmentWorkflow:
     """
-    Создание workflow для оценки рисков (ОБНОВЛЕННАЯ версия без LLM параметров)
+    Создание workflow для оценки рисков
     
     Args:
+        llm_base_url: URL LLM сервера
+        llm_model: Модель LLM
         quality_threshold: Порог качества для критика
         max_retries: Максимум повторов
         
@@ -1415,32 +1398,8 @@ def create_risk_assessment_workflow(
         Настроенный workflow
     """
     return RiskAssessmentWorkflow(
-        quality_threshold=quality_threshold,
-        max_retries=max_retries
-    )
-# Legacy функция для обратной совместимости (DEPRECATED)
-
-def create_risk_assessment_workflow_legacy(
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
-    quality_threshold: float = 7.0,
-    max_retries: int = 3
-) -> RiskAssessmentWorkflow:
-    """
-    DEPRECATED: Создание workflow (старая версия с LLM параметрами)
-    Используйте create_risk_assessment_workflow() без LLM параметров
-    """
-    import warnings
-    
-    warnings.warn(
-        "create_risk_assessment_workflow_legacy deprecated. Use create_risk_assessment_workflow() without LLM params.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    
-    # Создаем workflow с центральным конфигуратором
-    # LLM параметры игнорируются, так как используется центральная конфигурация
-    return create_risk_assessment_workflow(
+        llm_base_url=llm_base_url,
+        llm_model=llm_model,
         quality_threshold=quality_threshold,
         max_retries=max_retries
     )
@@ -1457,46 +1416,10 @@ def create_workflow_from_env() -> RiskAssessmentWorkflow:
         max_retries=int(os.getenv("MAX_RETRY_COUNT", "3"))
     )
 
-def validate_workflow_dependencies() -> Dict[str, bool]:
-    """Проверяет готовность зависимостей для workflow."""
-    # TODO: Реализовать реальную проверку (например, доступность LLM)
-    return {
-        "llm_configured": True,
-        "database_ready": True,
-        "agents_creatable": True
-    }
-
-async def test_workflow_execution() -> bool:
-    """Тестовый прогон workflow с минимальными данными."""
-    # TODO: Реализовать тестовый прогон с моками или тестовыми файлами
-    print("Тестовый прогон workflow (заглушка)...")
-    return True
-
-def print_workflow_status(workflow):
-    """Вывод статуса workflow (заглушка)."""
-    print(f"Workflow status: {type(workflow).__name__} is ready.")
 
 # Экспорт
-# Экспорт основных классов и функций (ОБНОВЛЕННЫЙ)
 __all__ = [
-    # Основной класс
     "RiskAssessmentWorkflow",
-    
-    # Фабрики (НОВЫЕ)
-    "create_risk_assessment_workflow",
-    "create_workflow_from_env",
-    
-    # Утилиты диагностики
-    "validate_workflow_dependencies",  # ДОБАВЛЕНО
-    "test_workflow_execution",         # ДОБАВЛЕНО
-    "print_workflow_status",
-    "get_workflow_health_check",       # ДОБАВЛЕНО
-    "diagnose_workflow_issues",        # ДОБАВЛЕНО
-    
-    # Дополнительные утилиты
-    "calculate_overall_risk_score",
-    "get_highest_risk_areas",
-    
-    # Legacy exports (deprecated)
-    "create_risk_assessment_workflow_legacy"
+    "create_risk_assessment_workflow", 
+    "create_workflow_from_env"
 ]

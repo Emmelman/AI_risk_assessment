@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
-import asyncio
+
 from sqlalchemy import Column, String, Integer, Float, DateTime, Text, Boolean, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
@@ -491,38 +491,3 @@ async def get_db_manager() -> DatabaseManager:
     if not db_manager.engine:
         await db_manager.initialize()
     return db_manager
-
-def init_database():
-    """Синхронная обертка для инициализации БД при старте приложения."""
-    try:
-        # Проверяем, есть ли уже запущенный цикл событий asyncio
-        loop = asyncio.get_running_loop()
-        # Если есть, выполняем в нем
-        loop.run_until_complete(get_db_manager())
-    except RuntimeError:
-        # Если нет, создаем новый
-        asyncio.run(get_db_manager())
-
-def test_db_connection() -> bool:
-    """Синхронная обертка для проверки соединения с БД."""
-    async def check():
-        try:
-            manager = await get_db_manager()
-            async with manager.engine.connect() as connection:
-                return True
-        except Exception:
-            return False
-    return asyncio.run(check())
-
-async def get_assessment_by_id_async(assessment_id: str) -> Optional[Dict[str, Any]]:
-    """Асинхронное получение оценки по ID."""
-    manager = await get_db_manager()
-    return await manager.get_risk_assessment(assessment_id)
-
-def get_assessment_by_id(assessment_id: str) -> Optional[Dict[str, Any]]:
-    """Синхронная обертка для CLI для получения оценки."""
-    async def get():
-        manager = await get_db_manager()
-        return await manager.get_risk_assessment(assessment_id)
-
-    return asyncio.run(get())

@@ -1,493 +1,670 @@
 # main.py
 """
-Главный модуль CLI приложения для оценки рисков ИИ-агентов
-
-ОБНОВЛЕНО: Интеграция с центральным LLM конфигуратором
+CLI интерфейс для системы оценки рисков ИИ-агентов
+Основная точка входа в систему
 """
 
 import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from datetime import datetime
-from dotenv import load_dotenv
-load_dotenv()
+
 import click
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.tree import Tree
+from rich.json import JSON
 
-# Импорты системы оценки рисков
-from src.workflow.graph_builder import (
-    create_risk_assessment_workflow, 
-    validate_workflow_dependencies,
-    print_workflow_status
-)
-from src.config import get_global_llm_config, LLMConfigManager
+# Добавляем путь к src
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from src.workflow import create_workflow_from_env
+from src.models.database import get_db_manager
 from src.utils.logger import setup_logging, get_logger
-from src.models.database import init_database, get_assessment_by_id
 
+# ===== НОВОЕ: Интеграция рассуждений =====
+from src.utils.reasoning_integration import enable_all_reasoning, setup_reasoning_env
 
-def setup_environment():
-    """Настройка окружения приложения"""
-    
-    # Настраиваем логирование
-    setup_logging()
-    
-    # Инициализируем базу данных
-    init_database()
-    
-    # Проверяем центральный конфигуратор LLM
-    try:
-        config_manager = get_global_llm_config()
-        if not config_manager.validate_configuration():
-            click.echo("⚠️  Предупреждение: Конфигурация LLM не прошла валидацию", err=True)
-        
-        if not config_manager.is_available():
-            click.echo("⚠️  Предупреждение: LLM сервер недоступен", err=True)
-            
-    except Exception as e:
-        click.echo(f"❌ Ошибка инициализации LLM конфигуратора: {e}", err=True)
-        sys.exit(1)
+console = Console()
 
 
 @click.group()
-@click.version_option(version="2.0.0", message="AI Risk Assessment System v%(version)s")
-def cli():
-    """
-    🤖 AI Risk Assessment System
+@click.option('--log-level', default='INFO', help='Уровень логирования')
+@click.option('--log-file', default='logs/ai_risk_assessment.log', help='Файл логов')
+@click.option('--show-reasoning/--no-reasoning', default=True, help='Показывать рассуждения агентов')
+@click.pass_context
+def cli(ctx, log_level, log_file, show_reasoning):
+    """🤖 Система оценки рисков ИИ-агентов"""
+    ctx.ensure_object(dict)
     
-    Система комплексной оценки операционных рисков ИИ-агентов
-    для банковской сферы с поддержкой российского регулирования.
-    """
-    setup_environment()
-
-
-@cli.command()
-@click.argument('paths', nargs=-1, required=True)
-@click.option('--agent-name', '-n', default=None, help='Название агента')
-@click.option('--output', '-o', type=click.Path(), help='Файл для сохранения результата')
-@click.option('--quality-threshold', '-q', type=float, default=7.0, 
-              help='Порог качества критика (0-10)')
-@click.option('--max-retries', '-r', type=int, default=3, 
-              help='Максимум повторов при неприемлемом качестве')
-@click.option('--format', 'output_format', type=click.Choice(['json', 'yaml', 'txt']), 
-              default='json', help='Формат вывода результата')
-@click.option('--verbose', '-v', is_flag=True, help='Подробный вывод')
-def assess(paths: tuple, agent_name: Optional[str], output: Optional[str], 
-           quality_threshold: float, max_retries: int, output_format: str, verbose: bool):
-    """
-    🎯 Комплексная оценка рисков ИИ-агента
+    # ===== НОВОЕ: Настройка рассуждений =====
+    if show_reasoning:
+        setup_reasoning_env()
+        enable_all_reasoning()
     
-    PATHS: Пути к файлам или папкам с данными агента
-    
-    Примеры использования:
-    
-      # Оценка одного файла
-      python main.py assess agent.py
-      
-      # Оценка папки с проектом
-      python main.py assess ./my_agent_project/
-      
-      # С настройками качества
-      python main.py assess ./agent/ --quality-threshold 8.0 --max-retries 5
-      
-      # Сохранение в файл  
-      python main.py assess ./agent/ --output results.json
-    """
-    
+    # Настраиваем логирование
+    setup_logging(log_level=log_level, log_file=log_file)
     logger = get_logger()
     
-    # Валидация путей
-    file_paths = []
-    for path_str in paths:
-        path = Path(path_str)
-        if not path.exists():
-            click.echo(f"❌ Путь не найден: {path_str}", err=True)
-            sys.exit(1)
-        file_paths.append(str(path.resolve()))
+    ctx.obj['logger'] = logger
+    ctx.obj['show_reasoning'] = show_reasoning
     
-    # Определяем имя агента
-    if not agent_name:
-        if len(file_paths) == 1:
-            agent_name = Path(file_paths[0]).stem
-        else:
-            agent_name = f"Agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Красивый заголовок
+    console.print(Panel.fit(
+        "[bold blue]🤖 Система оценки рисков ИИ-агентов[/bold blue]\n"
+        "Мультиагентная система на базе LangGraph\n"
+        f"{'🧠 Рассуждения агентов: ВКЛЮЧЕНЫ' if show_reasoning else '🔇 Рассуждения агентов: ВЫКЛЮЧЕНЫ'}",
+        title="AI Risk Assessment System",
+        border_style="blue"
+    ))
+
+
+@cli.command()
+@click.argument('source_files', nargs=-1, required=True)
+@click.option('--agent-name', '-n', help='Имя анализируемого агента')
+@click.option('--output', '-o', help='Файл для сохранения результата (JSON)')
+@click.option('--quality-threshold', '-q', default=7.0, help='Порог качества для критика (0-10)')
+@click.option('--max-retries', '-r', default=3, help='Максимум повторов оценки')
+@click.option('--model', '-m', default='qwen3-4b', help='LLM модель')
+@click.pass_context
+async def assess(ctx, source_files, agent_name, output, quality_threshold, max_retries, model):
+    """Запуск оценки рисков ИИ-агента"""
+    logger = ctx.obj['logger']
+    show_reasoning = ctx.obj.get('show_reasoning', True)
     
-    # Проверяем конфигурацию перед запуском
-    config_manager = get_global_llm_config()
-    if verbose:
-        status_info = config_manager.get_status_info()
-        click.echo(f"🔧 Используется провайдер: {status_info['provider']}")
-        click.echo(f"🔧 Модель: {status_info['model']}")
-        click.echo(f"🔧 Статус: {'✅ Доступен' if status_info['is_available'] else '❌ Недоступен'}")
-    
-    async def run_assessment():
-        """Асинхронный запуск оценки"""
-        
-        try:
-            # Создаем workflow (использует центральный конфигуратор)
-            workflow = create_risk_assessment_workflow(
-                quality_threshold=quality_threshold,
-                max_retries=max_retries
-            )
-            
-            if verbose:
-                click.echo(f"🚀 Запуск оценки агента '{agent_name}'...")
-                click.echo(f"📁 Анализируемые пути: {', '.join(file_paths)}")
-            
-            # Выполняем оценку
-            result = await workflow.run_assessment(
-                source_files=file_paths,
-                agent_name=agent_name
-            )
-            
-            # Форматируем результат
-            if output_format == 'json':
-                formatted_result = json.dumps(result, ensure_ascii=False, indent=2, default=str)
-            elif output_format == 'yaml':
-                import yaml
-                formatted_result = yaml.dump(result, allow_unicode=True, default_flow_style=False)
-            else:  # txt
-                formatted_result = format_result_as_text(result)
-            
-            # Сохраняем или выводим результат
-            if output:
-                Path(output).write_text(formatted_result, encoding='utf-8')
-                click.echo(f"✅ Результат сохранен в: {output}")
+    # Проверяем входные файлы
+    validated_files = []
+    for file_path in source_files:
+        path = Path(file_path)
+        if path.exists():
+            if path.is_dir():
+                # Если папка, берем все файлы
+                for ext in ['*.py', '*.js', '*.java', '*.txt', '*.md', '*.json', '*.yaml']:
+                    validated_files.extend([str(f) for f in path.rglob(ext)])
             else:
-                click.echo(formatted_result)
-            
-            # Краткая сводка
-            if verbose or not output:
-                print_assessment_summary(result)
-                
-        except Exception as e:
-            logger.error(f"Ошибка выполнения оценки: {e}")
-            click.echo(f"❌ Ошибка: {e}", err=True)
-            sys.exit(1)
+                validated_files.append(str(path.absolute()))
+        else:
+            console.print(f"[red]❌ Файл/папка не найдена: {file_path}[/red]")
+            return
     
-    # Запускаем асинхронную оценку
-    asyncio.run(run_assessment())
-
-
-@cli.command()
-@click.option('--check-llm', is_flag=True, help='Проверить доступность LLM')
-@click.option('--check-db', is_flag=True, help='Проверить подключение к БД')
-@click.option('--check-workflow', is_flag=True, help='Проверить готовность workflow')
-@click.option('--detailed', is_flag=True, help='Подробная диагностика')
-def status(check_llm: bool, check_db: bool, check_workflow: bool, detailed: bool):
-    """
-    📊 Проверка статуса системы
+    if not validated_files:
+        console.print("[red]❌ Не найдено валидных файлов для анализа[/red]")
+        return
     
-    Проверяет готовность всех компонентов системы оценки рисков.
-    """
+    console.print(f"[green]📁 Найдено файлов для анализа: {len(validated_files)}[/green]")
     
-    if not any([check_llm, check_db, check_workflow]) or detailed:
-        # Если не указаны конкретные проверки, делаем все
-        check_llm = check_db = check_workflow = True
+    # Показываем первые 10 файлов для подтверждения
+    for i, file_path in enumerate(validated_files[:10]):
+        console.print(f"  • {file_path}")
     
-    if check_llm:
-        click.echo("🔧 Проверка LLM конфигурации:")
-        check_llm_status(detailed)
+    if len(validated_files) > 10:
+        console.print(f"  ... и еще {len(validated_files) - 10} файлов")
     
-    if check_db:
-        click.echo("\n💾 Проверка базы данных:")
-        check_database_status(detailed)
+    # Создаем workflow
+    try:
+        console.print("\n[yellow]⚙️ Инициализация workflow...[/yellow]")
+        workflow = create_workflow_from_env()
+        
+        # Проверяем доступность LLM
+        llm_healthy = await workflow.profiler.health_check()
+        if not llm_healthy:
+            console.print("[red]❌ LM Studio недоступен на localhost:1234[/red]")
+            console.print("Убедитесь что LM Studio запущен с моделью qwen3-4b")
+            return
+        
+        console.print("[green]✅ LLM сервер доступен[/green]")
+        
+        if show_reasoning:
+            console.print("[blue]🧠 Рассуждения агентов будут отображаться в реальном времени[/blue]")
+        
+    except Exception as e:
+        console.print(f"[red]❌ Ошибка инициализации: {e}[/red]")
+        return
     
-    if check_workflow:
-        click.echo("\n⚙️  Проверка workflow:")
-        check_workflow_status(detailed)
-
-
-@cli.command()
-def demo():
-    """
-    🎬 Демонстрация системы на тестовых данных
+    # Запускаем оценку с прогрессом
+    assessment_id = f"cli_assessment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
-    Запускает оценку рисков на встроенных тестовых данных
-    для демонстрации возможностей системы.
-    """
-    
-    click.echo("🎬 Запуск демонстрации системы оценки рисков...")
-    
-    # Создаем тестовые данные
-    test_data = create_demo_data()
-    
-    async def run_demo():
-        """Асинхронный запуск демо"""
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console
+    ) as progress:
+        
+        task = progress.add_task("🔄 Выполнение оценки рисков...", total=None)
         
         try:
-            workflow = create_risk_assessment_workflow(
-                quality_threshold=6.0,  # Сниженный порог для демо
-                max_retries=2
-            )
-            
             result = await workflow.run_assessment(
-                file_paths=test_data["file_paths"],
-                agent_name="Demo Banking Assistant"
+                source_files=validated_files,
+                agent_name=agent_name,
+                assessment_id=assessment_id
             )
             
-            # Выводим красивый результат
-            print_demo_result(result)
+            print("\n🔍 DEBUG: Анализ результата workflow:")
+            print(f"result.keys(): {list(result.keys())}")
+            print(f"result['success']: {result.get('success')}")
+            print(f"result['current_step']: {result.get('current_step')}")
+
+            final_assessment = result.get("final_assessment")
+            if final_assessment:
+                print(f"final_assessment.keys(): {list(final_assessment.keys())}")
+                print(f"final_assessment['assessment_id']: {final_assessment.get('assessment_id')}")
+                print(f"final_assessment['overall_risk_level']: {final_assessment.get('overall_risk_level')}")
+                print(f"final_assessment['overall_risk_score']: {final_assessment.get('overall_risk_score')}")
+                
+                risk_evaluations = final_assessment.get("risk_evaluations", {})
+                print(f"risk_evaluations.keys(): {list(risk_evaluations.keys()) if risk_evaluations else 'None'}")
+                
+                recommendations = final_assessment.get("priority_recommendations", [])
+                print(f"recommendations count: {len(recommendations) if recommendations else 0}")
+            else:
+                print("final_assessment: None")
+
+            progress.update(task, completed=True)
+            
+            if result["success"]:
+                await _display_assessment_result(result, output)
+                logger.bind_context(assessment_id, "cli").info(
+                    f"✅ Оценка завершена успешно: {assessment_id}"
+                )
+            else:
+                console.print(f"[red]❌ Ошибка оценки: {result.get('error', 'Неизвестная ошибка')}[/red]")
+                
+        except KeyboardInterrupt:
+            progress.update(task, description="❌ Отменено пользователем")
+            console.print("\n[yellow]⚠️ Оценка прервана пользователем[/yellow]")
             
         except Exception as e:
-            click.echo(f"❌ Ошибка демонстрации: {e}", err=True)
-            sys.exit(1)
-    
-    asyncio.run(run_demo())
+            progress.update(task, description="❌ Ошибка выполнения")
+            console.print(f"\n[red]❌ Неожиданная ошибка: {e}[/red]")
+            logger.bind_context(assessment_id, "cli").error(f"Ошибка CLI: {e}")
+
+
+# ===== НОВОЕ: Команда для тестирования БД =====
+@cli.command()
+@click.pass_context
+async def test_db(ctx):
+    """Проверка состояния базы данных"""
+    try:
+        console.print("[blue]🗄️ Проверка базы данных...[/blue]")
+        
+        db_manager = await get_db_manager()
+        console.print("[green]✅ Подключение к БД успешно[/green]")
+        
+        # Простая статистика
+        from sqlalchemy import text
+        async with db_manager.async_session() as session:
+            
+            tables = ['agent_profiles', 'risk_assessments', 'risk_evaluations']
+            
+            stats_table = Table(title="📊 Статистика БД")
+            stats_table.add_column("Таблица", style="cyan")
+            stats_table.add_column("Записей", style="white")
+            
+            for table in tables:
+                try:
+                    result = await session.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                    count = result.scalar()
+                    stats_table.add_row(table, str(count))
+                except Exception as e:
+                    stats_table.add_row(table, f"Ошибка: {str(e)[:30]}")
+            
+            console.print(stats_table)
+        
+        await db_manager.close()
+        
+    except Exception as e:
+        console.print(f"[red]❌ Ошибка БД: {e}[/red]")
 
 
 @cli.command()
 @click.argument('assessment_id')
-@click.option('--format', 'output_format', type=click.Choice(['json', 'yaml', 'summary']), 
-              default='summary', help='Формат вывода')
-def show(assessment_id: str, output_format: str):
-    """
-    📋 Показать результаты конкретной оценки
-    
-    ASSESSMENT_ID: Идентификатор оценки для просмотра
-    """
-    
+@click.option('--output', '-o', help='Файл для сохранения результата')
+@click.pass_context
+async def show(ctx, assessment_id, output):
+    """Показать результаты оценки по ID"""
     try:
-        assessment = get_assessment_by_id(assessment_id)
-        if not assessment:
-            click.echo(f"❌ Оценка с ID '{assessment_id}' не найдена", err=True)
-            sys.exit(1)
+        db_manager = await get_db_manager()
+        assessment_data = await db_manager.get_risk_assessment(assessment_id)
         
-        if output_format == 'json':
-            click.echo(json.dumps(assessment, ensure_ascii=False, indent=2, default=str))
-        elif output_format == 'yaml':
-            import yaml
-            click.echo(yaml.dump(assessment, allow_unicode=True, default_flow_style=False))
-        else:  # summary
-            print_assessment_summary(assessment)
-            
+        if not assessment_data:
+            console.print(f"[red]❌ Оценка с ID {assessment_id} не найдена[/red]")
+            return
+        
+        await _display_saved_assessment(assessment_data, output)
+        
     except Exception as e:
-        click.echo(f"❌ Ошибка получения оценки: {e}", err=True)
-        sys.exit(1)
+        console.print(f"[red]❌ Ошибка получения оценки: {e}[/red]")
 
 
 @cli.command()
-@click.option('--provider', type=click.Choice(['lm_studio', 'gigachat']), 
-              help='Переключить LLM провайдера')
-@click.option('--model', help='Переопределить модель LLM')
-@click.option('--temperature', type=float, help='Переопределить температуру')
-@click.option('--show-config', is_flag=True, help='Показать текущую конфигурацию')
-def config(provider: Optional[str], model: Optional[str], temperature: Optional[float], show_config: bool):
-    """
-    ⚙️  Управление конфигурацией LLM
-    
-    Позволяет просматривать и изменять настройки LLM провайдера.
-    """
-    
-    config_manager = get_global_llm_config()
-    
-    if show_config:
-        status_info = config_manager.get_status_info()
-        click.echo("📋 Текущая конфигурация LLM:")
-        click.echo(f"  Провайдер: {status_info['provider_type']}")
-        click.echo(f"  Модель: {status_info['model']}")
-        click.echo(f"  URL: {status_info['base_url']}")
-        click.echo(f"  Температура: {status_info['temperature']}")
-        click.echo(f"  Доступен: {'✅' if status_info['is_available'] else '❌'}")
-        return
-    
-    if provider:
-        try:
-            new_manager = LLMConfigManager.create_with_provider_type(provider)
-            from src.config import set_global_llm_config
-            set_global_llm_config(new_manager)
-            click.echo(f"✅ Провайдер изменен на: {provider}")
-        except Exception as e:
-            click.echo(f"❌ Ошибка смены провайдера: {e}", err=True)
-    
-    # TODO: Реализовать переопределение модели и температуры
-    # Пока что эти параметры берутся из переменных окружения
-    
-    if not any([provider, model, temperature, show_config]):
-        click.echo("❓ Используйте --show-config для просмотра или укажите параметры для изменения")
-
-
-# ===============================
-# Вспомогательные функции
-# ===============================
-
-def check_llm_status(detailed: bool = False):
-    """Проверка статуса LLM"""
-    
+@click.option('--limit', '-l', default=10, help='Количество последних оценок')
+@click.pass_context
+async def list_assessments(ctx, limit):
+    """Список последних оценок"""
     try:
-        config_manager = get_global_llm_config()
-        status_info = config_manager.get_status_info()
+        db_manager = await get_db_manager()
         
-        # Основная информация
-        click.echo(f"  Провайдер: {status_info['provider']}")
-        click.echo(f"  Модель: {status_info['model']}")
-        click.echo(f"  Доступность: {'✅' if status_info['is_available'] else '❌'}")
-        click.echo(f"  Конфигурация: {'✅' if status_info['is_valid'] else '❌'}")
+        # Используем простой способ получения оценок
+        from sqlalchemy import select, desc
+        from src.models.database import RiskAssessmentDB
         
-        if detailed:
-            click.echo(f"  URL: {status_info['base_url']}")
-            click.echo(f"  Температура: {status_info['temperature']}")
-            click.echo(f"  Max tokens: {status_info['max_tokens']}")
+        async with db_manager.async_session() as session:
+            stmt = select(RiskAssessmentDB).order_by(desc(RiskAssessmentDB.assessment_timestamp)).limit(limit)
+            result = await session.execute(stmt)
+            assessments = result.scalars().all()
             
-    except Exception as e:
-        click.echo(f"  ❌ Ошибка: {e}")
-
-
-def check_database_status(detailed: bool = False):
-    """Проверка статуса базы данных"""
-    
-    try:
-        from src.models.database import test_db_connection
-        if test_db_connection():
-            click.echo("  ✅ База данных доступна")
-        else:
-            click.echo("  ❌ База данных недоступна")
+            if not assessments:
+                console.print("[yellow]📭 Нет сохраненных оценок[/yellow]")
+                return
             
-    except Exception as e:
-        click.echo(f"  ❌ Ошибка: {e}")
-
-
-def check_workflow_status(detailed: bool = False):
-    """Проверка статуса workflow"""
-    
-    try:
-        dependencies = validate_workflow_dependencies()
-        all_ready = all(dependencies.values())
-        
-        click.echo(f"  Готовность: {'✅' if all_ready else '❌'}")
-        
-        if detailed or not all_ready:
-            for component, status in dependencies.items():
-                status_icon = "✅" if status else "❌"
-                click.echo(f"    {status_icon} {component}")
+            table = Table(title=f"📋 Последние {len(assessments)} оценок")
+            table.add_column("ID", style="cyan")
+            table.add_column("Уровень риска", style="white")
+            table.add_column("Балл", style="white")
+            table.add_column("Дата", style="green")
+            
+            for assessment in assessments:
+                risk_level = assessment.overall_risk_level
+                color = {
+                    "low": "green",
+                    "medium": "yellow", 
+                    "high": "red"
+                }.get(risk_level, "white")
                 
+                table.add_row(
+                    assessment.id[:8] + "...",
+                    f"[{color}]{risk_level.upper()}[/{color}]",
+                    str(assessment.overall_risk_score),
+                    str(assessment.assessment_timestamp)[:19]
+                )
+            
+            console.print(table)
+        
+        await db_manager.close()
+        
     except Exception as e:
-        click.echo(f"  ❌ Ошибка: {e}")
+        console.print(f"[red]❌ Ошибка получения списка: {e}[/red]")
 
 
-def create_demo_data() -> Dict[str, Any]:
-    """Создание тестовых данных для демонстрации"""
+@cli.command()
+@click.option('--check-llm', is_flag=True, help='Проверить LLM сервер')
+@click.option('--check-db', is_flag=True, help='Проверить базу данных')
+@click.pass_context
+async def status(ctx, check_llm, check_db):
+    """Проверка статуса системы"""
+    results = []
     
-    import tempfile
-    import os
+    # Проверка LLM
+    if check_llm or not (check_db):
+        try:
+            from src.utils.llm_client import get_llm_client
+            client = await get_llm_client()
+            
+            if await client.health_check():
+                results.append(("✅ LLM сервер", "Доступен", "green"))
+                
+                try:
+                    models = await client.list_models()
+                    results.append(("📋 Доступные модели", f"{len(models)} моделей", "blue"))
+                except:
+                    results.append(("📋 Доступные модели", "Недоступно", "yellow"))
+            else:
+                results.append(("❌ LLM сервер", "Недоступен", "red"))
+                
+        except Exception as e:
+            results.append(("❌ LLM сервер", f"Ошибка: {str(e)[:50]}", "red"))
     
-    # Создаем временные файлы с тестовыми данными
-    demo_files = []
+    # Проверка базы данных
+    if check_db or not (check_llm):
+        try:
+            db_manager = await get_db_manager()
+            results.append(("✅ База данных", "Доступна", "green"))
+            
+            # Статистика
+            try:
+                from sqlalchemy import text
+                async with db_manager.async_session() as session:
+                    result = await session.execute(text("SELECT COUNT(*) FROM risk_assessments"))
+                    count = result.scalar()
+                    results.append(("📊 Оценок в БД", str(count), "blue"))
+            except:
+                results.append(("📊 Оценок в БД", "Недоступно", "yellow"))
+                
+            await db_manager.close()
+                
+        except Exception as e:
+            results.append(("❌ База данных", f"Ошибка: {str(e)[:50]}", "red"))
     
-    # Файл с кодом агента
-    agent_code = '''
-class BankingAssistant:
-    """ИИ-помощник для банковских операций"""
+    # Отображаем результаты
+    table = Table(title="Статус компонентов системы")
+    table.add_column("Компонент", style="bold")
+    table.add_column("Статус")
     
+    for component, status, color in results:
+        table.add_row(component, f"[{color}]{status}[/{color}]")
+    
+    console.print(table)
+
+
+# Замените demo команду в main.py на эту версию:
+
+@cli.command()
+@click.pass_context
+async def demo(ctx):
+    """Демонстрация системы на тестовых данных"""
+    console.print("[blue]🎭 Запуск демонстрации системы...[/blue]\n")
+    
+    # Создаем тестовые файлы
+    demo_dir = Path("demo_data")
+    demo_dir.mkdir(exist_ok=True)
+    
+    # Тестовый агент
+    test_agent_code = '''# demo_agent.py
+"""
+Демонстрационный ИИ-агент для системы оценки рисков
+"""
+
+class DemoAgent:
     def __init__(self):
-        self.model = "qwen3-4b"
-        self.capabilities = [
-            "Консультации по продуктам",
-            "Помощь с операциями", 
-            "Анализ финансов"
-        ]
+        self.name = "DemoAgent"
+        self.version = "1.0"
+        self.system_prompt = """
+        Ты - демонстрационный помощник банка.
+        Твоя задача - отвечать на вопросы клиентов о банковских услугах.
+        
+        Ограничения:
+        - Не раскрывай персональные данные клиентов
+        - Не давай финансовых советов
+        - Направляй сложные вопросы к специалистам
+        """
     
     def process_query(self, query: str) -> str:
-        # Обработка запроса клиента
-        return self.llm_call(query)
+        """Обработка запроса клиента"""
+        # Простая логика обработки
+        if "баланс" in query.lower():
+            return "Проверьте баланс в мобильном приложении банка"
+        elif "кредит" in query.lower():
+            return "Для вопросов по кредитам обратитесь к кредитному специалисту"
+        else:
+            return "Как я могу помочь вам сегодня?"
 '''
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(agent_code)
-        demo_files.append(f.name)
+    test_description = '''Демонстрационный агент
     
-    # Файл с конфигурацией
-    config_data = '''
-{
-    "agent_name": "Banking Assistant",
-    "target_audience": ["Клиенты банка", "Сотрудники"],
-    "data_access": ["internal", "confidential"],
-    "guardrails": [
-        "Не разглашать данные клиентов",
-        "Требовать аутентификацию для операций"
-    ]
-}
+Название: DemoAgent
+Тип: Банковский помощник
+Целевая аудитория: Клиенты банка
+Автономность: Под надзором
+
+Описание:
+Простой чат-бот для ответов на базовые вопросы клиентов банка.
+Имеет ограниченную функциональность и требует человеческого надзора.
+
+Возможности:
+- Ответы на часто задаваемые вопросы
+- Направление к специалистам
+- Простая навигация по услугам
+
+Ограничения:
+- Не обрабатывает персональные данные
+- Не принимает финансовых решений
+- Требует подтверждения для сложных операций
 '''
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        f.write(config_data)
-        demo_files.append(f.name)
-    
-    return {"file_paths": demo_files}
-
-
-def format_result_as_text(result: Dict[str, Any]) -> str:
-    """Форматирование результата в текстовом виде"""
-    
-    text_parts = []
-    
-    text_parts.append(f"🤖 ОЦЕНКА РИСКОВ АГЕНТА: {result.get('agent_name', 'Unknown')}")
-    text_parts.append("=" * 60)
-    
-    # Общий риск
-    overall_level = result.get('overall_risk_level', 'unknown')
-    overall_score = result.get('overall_risk_score', 0)
-    
-    risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(overall_level, "⚪")
-    text_parts.append(f"{risk_emoji} Общий уровень риска: {overall_level.upper()} ({overall_score}/10)")
-    text_parts.append("")
-    
-    # Детальные оценки
-    text_parts.append("📊 ДЕТАЛЬНЫЕ ОЦЕНКИ:")
-    risk_evaluations = result.get('risk_evaluations', {})
-    
-    for risk_type, evaluation in risk_evaluations.items():
-        risk_score = evaluation.get('risk_score', 0)
-        risk_level = evaluation.get('risk_level', 'unknown')
-        risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(risk_level, "⚪")
+    try:
+        # Сохраняем тестовые файлы
+        (demo_dir / "demo_agent.py").write_text(test_agent_code, encoding='utf-8')
+        (demo_dir / "description.txt").write_text(test_description, encoding='utf-8')
         
-        text_parts.append(f"  {risk_emoji} {risk_type}: {risk_level} ({risk_score}/10)")
+        console.print(f"[green]📁 Созданы тестовые файлы в {demo_dir}[/green]")
+        
+        # Запускаем оценку напрямую через workflow (БЕЗ рекурсии!)
+        demo_files = [str(demo_dir / "demo_agent.py"), str(demo_dir / "description.txt")]
+        
+        console.print("[blue]📊 Запускаем демонстрационную оценку...[/blue]\n")
+        
+        # Создаем workflow
+        workflow = create_workflow_from_env()
+        
+        # Проверяем LLM
+        llm_healthy = await workflow.profiler.health_check()
+        if not llm_healthy:
+            console.print("[red]❌ LM Studio недоступен. Запустите LM Studio с моделью qwen3-4b[/red]")
+            return
+        
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
+            task = progress.add_task("🔄 Демонстрационная оценка...", total=None)
+            
+            # Запускаем workflow напрямую
+            result = await workflow.run_assessment(
+                source_files=demo_files,
+                agent_name="DemoAgent",
+                assessment_id=f"demo_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            
+            progress.update(task, completed=True)
+            
+            if result["success"]:
+                console.print("\n[green]✅ Демонстрация завершена успешно![/green]")
+                await _display_assessment_result(result)
+            else:
+                console.print(f"\n[red]❌ Ошибка демонстрации: {result.get('error')}[/red]")
+                
+    except Exception as e:
+        console.print(f"\n[red]❌ Ошибка демонстрации: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+    
+    finally:
+        # Очищаем тестовые файлы
+        try:
+            import shutil
+            if demo_dir.exists():
+                shutil.rmtree(demo_dir)
+                console.print(f"[dim]🗑️ Очищены временные файлы[/dim]")
+        except:
+            pass
+
+
+# Вспомогательные функции для отображения результатов
+# Исправленная функция для main.py
+# Найдите и замените функцию _display_assessment_result
+
+async def _display_assessment_result(result, output_file=None):
+    """ИСПРАВЛЕННОЕ отображение результатов оценки"""
+    
+    # ИСПРАВЛЕНИЕ: проверяем разные возможные ключи
+    assessment = result.get("final_assessment") or result.get("assessment")
+    
+    if not assessment:
+        console.print("[red]❌ Нет данных для отображения[/red]")
+        console.print(f"[dim]DEBUG: Доступные ключи в result: {list(result.keys())}[/dim]")
+        
+        # Пытаемся отобразить хотя бы базовую информацию из result
+        if result.get("success"):
+            assessment_id = result.get("assessment_id", "unknown")
+            processing_time = result.get("processing_time", 0)
+            console.print(f"[yellow]Assessment ID: {assessment_id}[/yellow]")
+            console.print(f"[yellow]Время выполнения: {processing_time:.1f} секунд[/yellow]")
+            console.print("[yellow]⚠️ Детальные результаты недоступны[/yellow]")
+        return
+    
+    # Извлекаем данные с fallback значениями
+    assessment_id = assessment.get('assessment_id', result.get('assessment_id', 'unknown'))
+    overall_risk_level = assessment.get('overall_risk_level', 'unknown')
+    overall_risk_score = assessment.get('overall_risk_score', 0)
+    processing_time = assessment.get('processing_time_seconds', result.get('processing_time', 0))
+    
+    # Основная информация
+    console.print(Panel(
+        f"[bold green]🎯 Оценка завершена успешно![/bold green]\n\n"
+        f"Assessment ID: {assessment_id}\n"
+        f"Общий уровень риска: [bold]{overall_risk_level.upper()}[/bold]\n"
+        f"Общий балл: {overall_risk_score}/25\n"
+        f"Время обработки: {processing_time:.1f} секунд",
+        title="📊 Результаты оценки",
+        border_style="green"
+    ))
+    
+    # Детальные оценки рисков
+    risk_evaluations = assessment.get("risk_evaluations", {})
+    if risk_evaluations:
+        table = Table(title="🔍 Детальные оценки рисков")
+        table.add_column("Тип риска", style="cyan")
+        table.add_column("Балл", style="white")
+        table.add_column("Уровень", style="white")
+        table.add_column("Детали", style="dim")
+        
+        # Названия рисков для отображения
+        risk_names = {
+            'ethical': 'Этические риски',
+            'social': 'Социальные риски', 
+            'security': 'Безопасность данных',
+            'stability': 'Стабильность LLM',
+            'autonomy': 'Автономность',
+            'regulatory': 'Регуляторные риски'
+        }
+        
+        for risk_type, evaluation in risk_evaluations.items():
+            risk_name = risk_names.get(risk_type, risk_type)
+            
+            if isinstance(evaluation, dict):
+                level = evaluation.get('risk_level', 'unknown')
+                total_score = evaluation.get('total_score', 0)
+                prob_score = evaluation.get('probability_score', 0)
+                impact_score = evaluation.get('impact_score', 0)
+                
+                color = {
+                    'low': 'green',
+                    'medium': 'yellow',
+                    'high': 'red'
+                }.get(level, 'white')
+                
+                table.add_row(
+                    risk_name,
+                    f"{total_score}/25",
+                    f"[{color}]{level.upper()}[/{color}]",
+                    f"P:{prob_score}/5 × I:{impact_score}/5"
+                )
+            else:
+                table.add_row(
+                    risk_name,
+                    "N/A",
+                    "[dim]ОШИБКА[/dim]",
+                    "Неверный формат данных"
+                )
+        
+        console.print(table)
+    else:
+        console.print("[yellow]⚠️ Детальные оценки рисков недоступны[/yellow]")
     
     # Рекомендации
-    recommendations = result.get('priority_recommendations', [])
+    recommendations = assessment.get("priority_recommendations", [])
     if recommendations:
-        text_parts.append("")
-        text_parts.append("💡 ПРИОРИТЕТНЫЕ РЕКОМЕНДАЦИИ:")
-        for i, rec in enumerate(recommendations[:5], 1):
-            text_parts.append(f"  {i}. {rec}")
+        console.print("\n[bold green]💡 Приоритетные рекомендации:[/bold green]")
+        for i, rec in enumerate(recommendations[:10], 1):  # Показываем до 10 рекомендаций
+            console.print(f"  {i}. {rec}")
+    else:
+        console.print("\n[yellow]⚠️ Рекомендации недоступны[/yellow]")
     
-    # Время выполнения
-    processing_time = result.get('processing_time', 0)
-    text_parts.append("")
-    text_parts.append(f"⏱️  Время обработки: {processing_time:.1f} секунд")
+    # Показываем сводку по качеству (если доступна)
+    eval_summary = assessment.get("evaluation_summary", {})
+    if eval_summary:
+        success_rate = eval_summary.get("success_rate", 0)
+        successful_count = eval_summary.get("successful_evaluations", 0)
+        total_count = eval_summary.get("total_evaluations", 6)
+        
+        console.print(f"\n[bold blue]📈 Качество оценки:[/bold blue]")
+        console.print(f"  • Успешных оценок: {successful_count}/{total_count} ({success_rate:.1%})")
+        
+        if success_rate >= 0.8:
+            console.print("  • [green]🏆 Отличное качество результатов![/green]")
+        elif success_rate >= 0.5:
+            console.print("  • [yellow]👍 Хорошее качество результатов[/yellow]")
+        else:
+            console.print("  • [red]⚠️ Низкое качество результатов[/red]")
     
-    return "\n".join(text_parts)
-
-
-def print_assessment_summary(result: Dict[str, Any]):
-    """Вывод краткой сводки оценки"""
-    
-    agent_name = result.get('agent_name', 'Unknown')
-    overall_level = result.get('overall_risk_level', 'unknown')
-    overall_score = result.get('overall_risk_score', 0)
-    
-    risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(overall_level, "⚪")
-    
-    click.echo(f"\n📊 СВОДКА ОЦЕНКИ:")
-    click.echo(f"  Агент: {agent_name}")
-    click.echo(f"  {risk_emoji} Общий риск: {overall_level.upper()} ({overall_score}/10)")
-    
-    risk_evaluations = result.get('risk_evaluations', {})
+    # Сводка по найденным проблемам 
+    highest_risks = []
     if risk_evaluations:
-        high_risks = [rt for rt, ev in risk_evaluations.items() if ev.get('risk_level') == 'high']
-        if high_risks:
-            click.echo(f"  ⚠️  Высокие риски: {', '.join(high_risks)}")
-
-
-def print_demo_result(result: Dict[str, Any]):
-    """Красивый вывод результата демонстрации"""
+        for risk_type, evaluation in risk_evaluations.items():
+            if isinstance(evaluation, dict):
+                score = evaluation.get('total_score', 0)
+                if score > 15:  # High risk
+                    highest_risks.append(f"{risk_names.get(risk_type, risk_type)} ({score}/25)")
     
-    click.echo("\n" + "🎬 РЕЗУЛЬТАТЫ ДЕМОНСТРАЦИИ".center(60, "="))
-    click.echo(format_result_as_text(result))
-    click.echo("=" * 60)
-    click.echo("✅ Демонстрация завершена успешно!")
-    click.echo("\n💡 Для реальной оценки используйте: python main.py assess <путь_к_агенту>")
+    if highest_risks:
+        console.print(f"\n[bold red]⚠️ Области высокого риска:[/bold red]")
+        for risk in highest_risks:
+            console.print(f"  • {risk}")
+    
+    # Сохранение в файл
+    if output_file:
+        try:
+            output_path = Path(output_file)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Сохраняем весь результат
+            save_data = {
+                "assessment": assessment,
+                "metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "version": "1.0",
+                    "tool": "AI_Risk_Assessment",
+                    "assessment_id": assessment_id
+                },
+                "raw_result": result  # Включаем полный результат для отладки
+            }
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2, default=str)
+            
+            console.print(f"\n[green]💾 Результаты сохранены в {output_file}[/green]")
+        except Exception as e:
+            console.print(f"\n[red]❌ Ошибка сохранения: {e}[/red]")
 
 
-if __name__ == '__main__':
-    cli()
+async def _display_saved_assessment(assessment_data, output_file=None):
+    """Отображение сохраненной оценки"""
+    console.print("[blue]📋 Информация из базы данных[/blue]")
+    # Здесь можно добавить логику отображения сохраненных данных
+
+
+def main():
+    """Главная функция CLI"""
+    try:
+        # Создаем папки если их нет
+        Path("logs").mkdir(exist_ok=True)
+        Path("data").mkdir(exist_ok=True)
+        
+        # Запускаем CLI
+        cli()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]👋 До свидания![/yellow]")
+    except Exception as e:
+        console.print(f"\n[red]❌ Критическая ошибка: {e}[/red]")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    import asyncio
+    
+    # ИСПРАВЛЕННЫЙ патч для async команд
+    def make_async(f):
+        def wrapper(*args, **kwargs):
+            return asyncio.run(f(*args, **kwargs))
+        return wrapper
+    
+    # Применяем патч
+    assess.callback = make_async(assess.callback)
+    show.callback = make_async(show.callback)
+    list_assessments.callback = make_async(list_assessments.callback)
+    status.callback = make_async(status.callback)
+    demo.callback = make_async(demo.callback)
+    # test_db.callback = make_async(test_db.callback)  # Пока закомментировано
+    
+    main()
