@@ -43,20 +43,16 @@ class RiskAssessmentWorkflow:
     
     def __init__(
         self,
-        llm_base_url: str = "http://127.0.0.1:1234",
-        llm_model: str = "qwen3-4b",
         quality_threshold: float = 7.0,
         max_retries: int = 3
     ):
-        self.llm_base_url = llm_base_url
-        self.llm_model = llm_model
         self.quality_threshold = quality_threshold
         self.max_retries = max_retries
         
-        # Создаем агентов
-        self.profiler = create_profiler_agent(llm_base_url, llm_model)
-        self.evaluators = create_all_evaluator_agents(llm_base_url, llm_model)
-        self.critic = create_critic_agent(llm_base_url, llm_model, quality_threshold)
+        # Создаем агентов (используют центральный конфигуратор)
+        self.profiler = create_profiler_agent()
+        self.evaluators = create_all_evaluator_agents()
+        self.critic = create_critic_agent(quality_threshold)
         
         # Логгер для LangGraph
         self.graph_logger = get_langgraph_logger()
@@ -1380,17 +1376,13 @@ class RiskAssessmentWorkflow:
 # ===============================
 
 def create_risk_assessment_workflow(
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
     quality_threshold: float = 7.0,
     max_retries: int = 3
 ) -> RiskAssessmentWorkflow:
     """
-    Создание workflow для оценки рисков
+    Создание workflow для оценки рисков (ОБНОВЛЕННАЯ версия без LLM параметров)
     
     Args:
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
         quality_threshold: Порог качества для критика
         max_retries: Максимум повторов
         
@@ -1398,8 +1390,32 @@ def create_risk_assessment_workflow(
         Настроенный workflow
     """
     return RiskAssessmentWorkflow(
-        llm_base_url=llm_base_url,
-        llm_model=llm_model,
+        quality_threshold=quality_threshold,
+        max_retries=max_retries
+    )
+# Legacy функция для обратной совместимости (DEPRECATED)
+
+def create_risk_assessment_workflow_legacy(
+    llm_base_url: str = "http://127.0.0.1:1234",
+    llm_model: str = "qwen3-4b",
+    quality_threshold: float = 7.0,
+    max_retries: int = 3
+) -> RiskAssessmentWorkflow:
+    """
+    DEPRECATED: Создание workflow (старая версия с LLM параметрами)
+    Используйте create_risk_assessment_workflow() без LLM параметров
+    """
+    import warnings
+    
+    warnings.warn(
+        "create_risk_assessment_workflow_legacy deprecated. Use create_risk_assessment_workflow() without LLM params.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    # Создаем workflow с центральным конфигуратором
+    # LLM параметры игнорируются, так как используется центральная конфигурация
+    return create_risk_assessment_workflow(
         quality_threshold=quality_threshold,
         max_retries=max_retries
     )
@@ -1418,8 +1434,24 @@ def create_workflow_from_env() -> RiskAssessmentWorkflow:
 
 
 # Экспорт
+# Экспорт основных классов и функций (ОБНОВЛЕННЫЙ)
 __all__ = [
+    # Основной класс
     "RiskAssessmentWorkflow",
-    "create_risk_assessment_workflow", 
-    "create_workflow_from_env"
+    
+    # Фабрики (НОВЫЕ)
+    "create_risk_assessment_workflow",
+    "create_workflow_from_env",
+    
+    # Утилиты диагностики
+    "validate_workflow_dependencies",
+    "test_workflow_execution", 
+    "print_workflow_status",
+    
+    # Дополнительные утилиты
+    "calculate_overall_risk_score",
+    "get_highest_risk_areas",
+    
+    # Legacy exports (deprecated)
+    "create_risk_assessment_workflow_legacy"
 ]

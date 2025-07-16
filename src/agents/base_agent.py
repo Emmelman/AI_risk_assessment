@@ -2,6 +2,8 @@
 """
 Базовый класс для всех агентов в системе оценки рисков ИИ-агентов
 Предоставляет общий интерфейс и функциональность для всех типов агентов
+
+ОБНОВЛЕНО: Интеграция с центральным LLM конфигуратором
 """
 
 import asyncio
@@ -15,18 +17,19 @@ from dataclasses import dataclass
 from ..utils.llm_client import LLMClient, LLMConfig, LLMMessage, RiskAnalysisLLMClient
 from ..utils.logger import get_logger, log_agent_execution, log_llm_call
 from ..models.risk_models import AgentTaskResult, ProcessingStatus
+from ..config import get_global_llm_config
 
 
 @dataclass
 class AgentConfig:
-    """Конфигурация агента"""
+    """Конфигурация агента (упрощенная версия без LLM параметров)"""
     name: str
     description: str
-    llm_config: LLMConfig
     max_retries: int = 3
     timeout_seconds: int = 180
-    temperature: float = 0.1
     use_risk_analysis_client: bool = False
+    # Опциональные переопределения LLM настроек (для тестирования)
+    llm_override: Optional[LLMConfig] = None
 
 
 class BaseAgent(ABC):
@@ -34,7 +37,7 @@ class BaseAgent(ABC):
     Базовый класс для всех агентов системы оценки рисков
     
     Предоставляет:
-    - Подключение к LLM
+    - Подключение к LLM через центральный конфигуратор
     - Логирование
     - Обработка ошибок и повторы
     - Валидация результатов
@@ -45,11 +48,8 @@ class BaseAgent(ABC):
         self.config = config
         self.logger = get_logger()
         
-        # Инициализируем LLM клиент
-        if config.use_risk_analysis_client:
-            self.llm_client = RiskAnalysisLLMClient(config.llm_config)
-        else:
-            self.llm_client = LLMClient(config.llm_config)
+        # Получаем LLM конфигурацию из центрального менеджера
+        self._setup_llm_client()
         
         # Статистика работы агента
         self.stats = {
@@ -59,6 +59,33 @@ class BaseAgent(ABC):
             "total_execution_time": 0.0,
             "average_response_time": 0.0
         }
+    
+    def _setup_llm_client(self):
+        """Настройка LLM клиента через центральный конфигуратор"""
+        if self.config.llm_override:
+            # Используем переопределенную конфигурацию (для тестирования)
+            llm_config = self.config.llm_override
+        else:
+            # Получаем конфигурацию из центрального менеджера
+            global_config_manager = get_global_llm_config()
+            unified_config = global_config_manager.get_config()
+            
+            # Преобразуем унифицированную конфигурацию в LLMConfig
+            llm_config = LLMConfig(
+                base_url=unified_config.base_url,
+                model=unified_config.model,
+                temperature=unified_config.temperature,
+                max_tokens=unified_config.max_tokens,
+                timeout=unified_config.timeout,
+                max_retries=unified_config.max_retries,
+                retry_delay=unified_config.retry_delay
+            )
+        
+        # Создаем подходящий клиент
+        if self.config.use_risk_analysis_client:
+            self.llm_client = RiskAnalysisLLMClient(llm_config)
+        else:
+            self.llm_client = LLMClient(llm_config)
     
     @property
     def name(self) -> str:
@@ -74,10 +101,10 @@ class BaseAgent(ABC):
     async def process(
         self, 
         input_data: Dict[str, Any], 
-        assessment_id: str
+        assessment_id: str = "unknown"
     ) -> AgentTaskResult:
         """
-        Основной метод обработки для агента
+        Основной метод обработки данных агентом
         
         Args:
             input_data: Входные данные для обработки
@@ -93,118 +120,76 @@ class BaseAgent(ABC):
         """Получение системного промпта для агента"""
         pass
     
-    async def run(
-        self, 
-        input_data: Dict[str, Any], 
-        assessment_id: str
-    ) -> AgentTaskResult:
+    async def execute_with_retry(
+        self,
+        task_func,
+        *args,
+        max_retries: Optional[int] = None,
+        **kwargs
+    ) -> Any:
         """
-        Запуск агента с обработкой ошибок и повторами
+        Выполнение задачи с повторами при ошибках
         
         Args:
-            input_data: Входные данные
-            assessment_id: ID оценки
+            task_func: Функция для выполнения
+            max_retries: Максимальное количество повторов
+            *args, **kwargs: Аргументы для функции
             
         Returns:
-            Результат выполнения
+            Результат выполнения функции
         """
-        task_result = AgentTaskResult(
-            agent_name=self.name,
-            task_type=self._get_task_type(),
-            status=ProcessingStatus.IN_PROGRESS,
-            start_time=datetime.now()
-        )
+        retries = max_retries or self.config.max_retries
+        last_error = None
         
-        # Логируем начало работы
-        self.logger.log_agent_start(self.name, self._get_task_type(), assessment_id)
-        
-        for attempt in range(self.config.max_retries):
+        for attempt in range(retries + 1):
             try:
-                # Выполняем основную обработку
-                result = await asyncio.wait_for(
-                    self.process(input_data, assessment_id),
-                    timeout=self.config.timeout_seconds
-                )
+                result = await task_func(*args, **kwargs)
                 
-                # Обновляем статистику
-                self._update_stats(True, result.execution_time_seconds or 0)
-                
-                # Логируем успех
-                self.logger.log_agent_success(
-                    self.name, 
-                    self._get_task_type(), 
-                    assessment_id, 
-                    result.execution_time_seconds or 0
-                )
+                if attempt > 0:
+                    self.logger.info(f"Задача выполнена успешно с попытки {attempt + 1}")
                 
                 return result
                 
-            except asyncio.TimeoutError:
-                error_msg = f"Тайм-аут выполнения ({self.config.timeout_seconds}с)"
-                await self._handle_retry(task_result, error_msg, attempt, assessment_id)
-                
             except Exception as e:
-                error_msg = f"Ошибка выполнения: {str(e)}"
-                await self._handle_retry(task_result, error_msg, attempt, assessment_id)
+                last_error = e
+                self.logger.warning(f"Попытка {attempt + 1} неудачна: {str(e)}")
+                
+                if attempt < retries:
+                    await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка
+                else:
+                    self.logger.error(f"Все {retries + 1} попыток неудачны. Финальная ошибка: {str(e)}")
         
-        # Все попытки исчерпаны
-        task_result.status = ProcessingStatus.FAILED
-        task_result.end_time = datetime.now()
-        task_result.execution_time_seconds = (
-            task_result.end_time - task_result.start_time
-        ).total_seconds()
-        
-        self._update_stats(False, task_result.execution_time_seconds)
-        
-        self.logger.log_agent_error(
-            self.name, 
-            self._get_task_type(), 
-            assessment_id, 
-            Exception(task_result.error_message or "Неизвестная ошибка")
-        )
-        
-        return task_result
+        raise last_error
     
     async def call_llm(
         self,
-        system_prompt: str,
-        user_message: str,
-        context: Optional[str] = None,
+        prompt: str,
+        context: str = "",
         assessment_id: str = "unknown",
         temperature: Optional[float] = None
     ) -> str:
         """
-        Вызов LLM с логированием и обработкой ошибок
+        Универсальный метод для вызова LLM
         
         Args:
-            system_prompt: Системный промпт
-            user_message: Сообщение пользователя
-            context: Дополнительный контекст
-            assessment_id: ID оценки для логирования
-            temperature: Температура генерации
+            prompt: Основной промпт
+            context: Контекстная информация
+            assessment_id: ID оценки
+            temperature: Температура (переопределяет настройки)
             
         Returns:
             Ответ от LLM
         """
+        system_prompt = self.get_system_prompt()
+        
         messages = [
-            LLMMessage(role="system", content=system_prompt)
+            LLMMessage(role="system", content=system_prompt),
+            LLMMessage(role="user", content=f"{context}\n\n{prompt}")
         ]
         
-        # Добавляем контекст если есть
-        if context:
-            messages.append(
-                LLMMessage(
-                    role="user", 
-                    content=f"Контекст:\n{context}\n\nЗадача:\n{user_message}"
-                )
-            )
-        else:
-            messages.append(LLMMessage(role="user", content=user_message))
-        
-        # Вызываем LLM
-        response = await self.llm_client.complete_chat(
+        response = await self.llm_client.chat(
             messages=messages,
-            temperature=temperature or self.config.temperature
+            temperature=temperature or self.llm_client.config.temperature
         )
         
         # Логируем вызов LLM
@@ -270,209 +255,7 @@ class BaseAgent(ABC):
         if not isinstance(result_data, dict):
             return False
         
-        # Проверяем обязательные поля (переопределяется в наследниках)
-        required_fields = self._get_required_result_fields()
-        for field in required_fields:
-            if field not in result_data:
-                return False
-        
         return True
-    
-    def _get_task_type(self) -> str:
-        """Получение типа задачи агента"""
-        return self.__class__.__name__.lower().replace('agent', '')
-    
-    def _get_required_result_fields(self) -> List[str]:
-        """Получение списка обязательных полей результата (переопределяется в наследниках)"""
-        return []
-    
-    async def _handle_retry(
-        self, 
-        task_result: AgentTaskResult, 
-        error_msg: str, 
-        attempt: int, 
-        assessment_id: str
-    ):
-        """Обработка повторной попытки"""
-        task_result.error_message = error_msg
-        
-        if attempt < self.config.max_retries - 1:
-            # Логируем повтор
-            self.logger.log_agent_retry(
-                self.name, 
-                self._get_task_type(), 
-                assessment_id, 
-                attempt + 1
-            )
-            
-            # Небольшая задержка перед повтором
-            await asyncio.sleep(1.0 * (attempt + 1))
-        else:
-            # Последняя попытка - фиксируем ошибку
-            task_result.status = ProcessingStatus.FAILED
-            task_result.end_time = datetime.now()
-    
-    def _update_stats(self, success: bool, execution_time: float):
-        """Обновление статистики агента"""
-        self.stats["total_requests"] += 1
-        self.stats["total_execution_time"] += execution_time
-        
-        if success:
-            self.stats["successful_requests"] += 1
-        else:
-            self.stats["failed_requests"] += 1
-        
-        # Пересчитываем среднее время ответа
-        self.stats["average_response_time"] = (
-            self.stats["total_execution_time"] / self.stats["total_requests"]
-        )
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Получение статистики работы агента"""
-        return {
-            **self.stats,
-            "success_rate": (
-                self.stats["successful_requests"] / max(self.stats["total_requests"], 1)
-            ),
-            "agent_name": self.name,
-            "agent_type": self._get_task_type()
-        }
-    
-    async def health_check(self) -> bool:
-        """Проверка работоспособности агента"""
-        try:
-            # Проверяем доступность LLM
-            llm_healthy = await self.llm_client.health_check()
-            
-            # Можно добавить дополнительные проверки
-            return llm_healthy
-            
-        except Exception:
-            return False
-    
-    async def cleanup(self):
-        """Очистка ресурсов агента"""
-        try:
-            await self.llm_client.close()
-        except Exception:
-            pass
-    
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__}(name={self.name})"
-    
-    def __repr__(self) -> str:
-        return self.__str__()
-
-
-class AnalysisAgent(BaseAgent):
-    """
-    Базовый класс для агентов анализа
-    Расширяет BaseAgent функциональностью для анализа данных
-    """
-    
-    def __init__(self, config: AgentConfig):
-        super().__init__(config)
-    
-    async def analyze_data(
-        self,
-        data: str,
-        analysis_type: str,
-        criteria: str,
-        assessment_id: str,
-        examples: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Общий метод анализа данных
-        
-        Args:
-            data: Данные для анализа
-            analysis_type: Тип анализа
-            criteria: Критерии анализа
-            assessment_id: ID оценки
-            examples: Примеры для контекста
-            
-        Returns:
-            Результат анализа
-        """
-        system_prompt = self.get_system_prompt()
-        
-        if examples:
-            system_prompt += f"\n\nПРИМЕРЫ:\n{examples}"
-        
-        user_message = f"""ДАННЫЕ ДЛЯ АНАЛИЗА:
-{data}
-
-ТИП АНАЛИЗА: {analysis_type}
-
-КРИТЕРИИ:
-{criteria}
-
-Выполни анализ согласно указанным критериям."""
-        
-        response = await self.call_llm(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            assessment_id=assessment_id
-        )
-        
-        return {"analysis_result": response, "analysis_type": analysis_type}
-
-
-class EvaluationAgent(BaseAgent):
-    """
-    Базовый класс для агентов-оценщиков рисков
-    Расширяет BaseAgent функциональностью для оценки рисков
-    """
-    
-    def __init__(self, config: AgentConfig):
-        # Оценщики должны использовать специализированный клиент
-        config.use_risk_analysis_client = True
-        super().__init__(config)
-    
-    async def evaluate_risk(
-        self,
-        risk_type: str,
-        agent_data: str,
-        evaluation_criteria: str,
-        assessment_id: str,
-        examples: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Оценка риска с использованием специализированного клиента"""
-        
-        try:
-            if not isinstance(self.llm_client, RiskAnalysisLLMClient):
-                raise ValueError("Агент-оценщик должен использовать RiskAnalysisLLMClient")
-            
-            # ИСПРАВЛЕНИЕ: Передаем параметр examples в вызов
-            result = await self.llm_client.evaluate_risk(
-                risk_type=risk_type,
-                agent_data=agent_data,
-                evaluation_criteria=evaluation_criteria,
-                examples=examples  # ИСПРАВЛЕНО: Добавлен параметр examples
-            )
-            
-            # ИСПРАВЛЕНИЕ: Применяем дополнительную валидацию
-            validated_result = self._ensure_required_fields(result)
-            
-            # Логируем оценку
-            self.logger.log_risk_evaluation(
-                self.name,
-                assessment_id,
-                risk_type,
-                validated_result["total_score"],
-                validated_result["risk_level"]
-            )
-            
-            return validated_result
-            
-        except Exception as e:
-            # ИСПРАВЛЕНИЕ: В случае любой ошибки возвращаем безопасные дефолтные данные
-            self.logger.bind_context(assessment_id, self.name).error(
-                f"❌ Ошибка оценки риска {risk_type}: {e}"
-            )
-            
-            # Возвращаем дефолтные данные вместо exception
-            return self._get_default_evaluation_data(f"Ошибка оценки риска: {str(e)}")
     
     def _get_required_result_fields(self) -> List[str]:
         """Обязательные поля для результата оценки риска"""
@@ -480,6 +263,7 @@ class EvaluationAgent(BaseAgent):
             "probability_score", "impact_score", "total_score", 
             "risk_level", "probability_reasoning", "impact_reasoning"
         ]
+    
     def _parse_llm_response(self, response_content: str) -> Dict[str, Any]:
         """ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ парсинг ответа LLM с максимальной надежностью"""
         
@@ -531,10 +315,10 @@ class EvaluationAgent(BaseAgent):
             
         except Exception as e:
             # Если ничего не помогло, возвращаем безопасные дефолтные данные
-            self.logger.bind_context("unknown", self.name).warning(
+            self.logger.warning(
                 f"⚠️ Критическая ошибка парсинга LLM ответа, используем fallback: {e}"
             )
-            self.logger.bind_context("unknown", self.name).debug(
+            self.logger.debug(
                 f"Проблемный контент: {response_content[:200]}..."
             )
             return self._get_default_evaluation_data(f"Критическая ошибка парсинга: {str(e)}")
@@ -576,7 +360,7 @@ class EvaluationAgent(BaseAgent):
         for field, default_value in required_fields.items():
             if field not in parsed_data or parsed_data[field] is None:
                 parsed_data[field] = default_value
-                self.logger.bind_context("unknown", self.name).debug(
+                self.logger.debug(
                     f"🔧 Добавлено отсутствующее поле {field}: {default_value}"
                 )
         
@@ -665,7 +449,7 @@ class EvaluationAgent(BaseAgent):
                 data[field] = max(1, min(5, value))  # Ограничиваем диапазон 1-5
             except (ValueError, TypeError):
                 data[field] = 3  # Средний балл
-                self.logger.bind_context("unknown", self.name).warning(
+                self.logger.warning(
                     f"🔧 Исправлен некорректный {field}: установлено значение 3"
                 )
         
@@ -680,7 +464,7 @@ class EvaluationAgent(BaseAgent):
         valid_levels = ["low", "medium", "high"]
         if data.get("risk_level") not in valid_levels:
             data["risk_level"] = "medium"
-            self.logger.bind_context("unknown", self.name).warning(
+            self.logger.warning(
                 "🔧 Исправлен некорректный risk_level: установлено 'medium'"
             )
         
@@ -722,11 +506,12 @@ class EvaluationAgent(BaseAgent):
         if data["risk_level"] != correct_level:
             old_level = data["risk_level"]
             data["risk_level"] = correct_level
-            self.logger.bind_context("unknown", self.name).debug(
+            self.logger.debug(
                 f"🔧 Скорректирован risk_level: {old_level} → {correct_level} (total_score: {total_score})"
             )
         
         return data
+    
     def _get_default_evaluation_data(self, error_message: str) -> Dict[str, Any]:
         """УЛУЧШЕННЫЕ безопасные дефолтные данные для оценки"""
         return {
@@ -740,12 +525,182 @@ class EvaluationAgent(BaseAgent):
             "recommendations": ["Провести дополнительный анализ", "Улучшить качество входных данных"],
             "confidence_level": 0.3  # Низкая уверенность для fallback данных
         }
+    
+    def update_stats(self, execution_time: float, success: bool):
+        """Обновление статистики агента"""
+        self.stats["total_requests"] += 1
+        self.stats["total_execution_time"] += execution_time
+        
+        if success:
+            self.stats["successful_requests"] += 1
+        else:
+            self.stats["failed_requests"] += 1
+        
+        self.stats["average_response_time"] = (
+            self.stats["total_execution_time"] / self.stats["total_requests"]
+        )
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Получение статистики работы агента"""
+        return self.stats.copy()
+
+
+class AnalysisAgent(BaseAgent):
+    """
+    Базовый класс для агентов анализа
+    Специализированный для задач анализа данных и извлечения информации
+    """
+    
+    async def analyze_data(
+        self,
+        data: str,
+        analysis_type: str,
+        assessment_id: str = "unknown"
+    ) -> Dict[str, Any]:
+        """
+        Универсальный метод анализа данных
+        
+        Args:
+            data: Данные для анализа
+            analysis_type: Тип анализа
+            assessment_id: ID оценки
+            
+        Returns:
+            Результат анализа
+        """
+        prompt = f"Проведи {analysis_type} анализ предоставленных данных."
+        
+        return await self.call_llm_structured(
+            data_to_analyze=data,
+            extraction_prompt=prompt,
+            assessment_id=assessment_id
+        )
+
+
+class EvaluationAgent(BaseAgent):
+    """
+    Базовый класс для агентов оценки
+    Специализированный для задач оценки рисков
+    """
+    
+    def __init__(self, config: AgentConfig, risk_type: str):
+        super().__init__(config)
+        self.risk_type = risk_type
+    
+    async def evaluate_risk(
+        self,
+        agent_data: Dict[str, Any],
+        assessment_id: str = "unknown"
+    ) -> Dict[str, Any]:
+        """
+        Оценка риска определенного типа
+        
+        Args:
+            agent_data: Данные об агенте
+            assessment_id: ID оценки
+            
+        Returns:
+            Результат оценки риска
+        """
+        evaluation_prompt = f"Оцени {self.risk_type} риски агента на основе предоставленных данных."
+        
+        agent_data_str = json.dumps(agent_data, ensure_ascii=False, indent=2)
+        
+        # Используем новый метод для структурированного вызова
+        try:
+            result = await self.call_llm_structured(
+                data_to_analyze=agent_data_str,
+                extraction_prompt=evaluation_prompt,
+                assessment_id=assessment_id
+            )
+            
+            # Дополнительная валидация специфично для оценки рисков
+            result = self._ensure_required_fields(result)
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка оценки {self.risk_type} риска: {e}")
+            return self.create_fallback_result(str(e))
+    
+    def create_fallback_result(self, error_message: str) -> Dict[str, Any]:
+        """Создание fallback результата при ошибках"""
+        return self._get_default_evaluation_data(error_message)
+    
+    def validate_result(self, result_data: Dict[str, Any]) -> bool:
+        """Валидация результата оценки риска"""
+        required_fields = self._get_required_result_fields()
+        
+        # Проверяем наличие всех обязательных полей
+        for field in required_fields:
+            if field not in result_data:
+                return False
+        
+        # Проверяем валидность значений
+        try:
+            prob_score = int(result_data["probability_score"])
+            impact_score = int(result_data["impact_score"])
+            
+            if not (1 <= prob_score <= 5) or not (1 <= impact_score <= 5):
+                return False
+                
+            if result_data["risk_level"] not in ["low", "medium", "high"]:
+                return False
+                
+            return True
+            
+        except (ValueError, TypeError, KeyError):
+            return False
+
 
 # ===============================
-# Фабрики для создания агентов
+# Фабрики для создания агентов (ОБНОВЛЕННЫЕ)
 # ===============================
 
 def create_agent_config(
+    name: str,
+    description: str,
+    max_retries: int = 3,
+    timeout_seconds: int = 120,
+    use_risk_analysis_client: bool = False,
+    llm_override: Optional[LLMConfig] = None
+) -> AgentConfig:
+    """
+    Создание конфигурации агента (новая версия без LLM параметров)
+    
+    Args:
+        name: Имя агента
+        description: Описание агента
+        max_retries: Максимум повторов
+        timeout_seconds: Тайм-аут в секундах
+        use_risk_analysis_client: Использовать специализированный клиент
+        llm_override: Переопределение LLM конфигурации (для тестирования)
+        
+    Returns:
+        Конфигурация агента
+    """
+    return AgentConfig(
+        name=name,
+        description=description,
+        max_retries=max_retries,
+        timeout_seconds=timeout_seconds,
+        use_risk_analysis_client=use_risk_analysis_client,
+        llm_override=llm_override
+    )
+
+
+def create_default_config() -> AgentConfig:
+    """Создание конфигурации по умолчанию (использует центральный конфигуратор)"""
+    return create_agent_config(
+        name="default_agent",
+        description="Агент с настройками по умолчанию",
+        max_retries=3,
+        timeout_seconds=120
+    )
+
+
+# Обратная совместимость - старые функции с LLM параметрами (DEPRECATED)
+def create_agent_config_legacy(
     name: str,
     description: str,
     llm_base_url: str = "http://127.0.0.1:1234",
@@ -756,52 +711,45 @@ def create_agent_config(
     use_risk_analysis_client: bool = False
 ) -> AgentConfig:
     """
-    Создание конфигурации агента
+    DEPRECATED: Создание конфигурации агента (старая версия для обратной совместимости)
     
-    Args:
-        name: Имя агента
-        description: Описание агента
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
-        temperature: Температура генерации
-        max_retries: Максимум повторов
-        timeout_seconds: Тайм-аут в секундах
-        use_risk_analysis_client: Использовать специализированный клиент
-        
-    Returns:
-        Конфигурация агента
+    Используйте create_agent_config() без LLM параметров.
+    LLM конфигурация теперь управляется централизованно.
     """
-    llm_config = LLMConfig(
+    import warnings
+    warnings.warn(
+        "create_agent_config_legacy deprecated. Use create_agent_config() without LLM params.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    # Создаем переопределение для тестирования/legacy кода
+    llm_override = LLMConfig(
         base_url=llm_base_url,
         model=llm_model,
         temperature=temperature,
         timeout=timeout_seconds
     )
     
-    return AgentConfig(
+    return create_agent_config(
         name=name,
         description=description,
-        llm_config=llm_config,
         max_retries=max_retries,
         timeout_seconds=timeout_seconds,
-        temperature=temperature,
-        use_risk_analysis_client=use_risk_analysis_client
+        use_risk_analysis_client=use_risk_analysis_client,
+        llm_override=llm_override
     )
 
 
 def create_default_config_from_env() -> AgentConfig:
-    """Создание конфигурации по умолчанию из переменных окружения"""
-    import os
-    
-    return create_agent_config(
-        name="default_agent",
-        description="Агент с настройками по умолчанию",
-        llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
-        max_retries=int(os.getenv("MAX_RETRY_COUNT", "3")),
-        timeout_seconds=120
+    """DEPRECATED: Используйте create_default_config()"""
+    import warnings
+    warnings.warn(
+        "create_default_config_from_env deprecated. Use create_default_config().",
+        DeprecationWarning,
+        stacklevel=2
     )
+    return create_default_config()
 
 
 # Экспорт основных классов
@@ -811,5 +759,8 @@ __all__ = [
     "EvaluationAgent",
     "AgentConfig",
     "create_agent_config",
+    "create_default_config",
+    # Legacy exports (deprecated)
+    "create_agent_config_legacy",
     "create_default_config_from_env"
 ]

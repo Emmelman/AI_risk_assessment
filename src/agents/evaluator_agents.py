@@ -843,61 +843,56 @@ class SocialRiskEvaluator(EvaluationAgent):
 
 
 def create_all_evaluator_agents(
-    llm_base_url: str = "http://127.0.0.1:1234",
-    llm_model: str = "qwen3-4b",
-    temperature: float = 0.1
+    max_retries: int = 3,
+    timeout_seconds: int = 120
 ) -> Dict[RiskType, EvaluationAgent]:
     """
-    Создание всех 6 агентов-оценщиков
+    Создание всех 6 агентов-оценщиков (ОБНОВЛЕННАЯ версия без LLM параметров)
     
     Args:
-        llm_base_url: URL LLM сервера
-        llm_model: Модель LLM
-        temperature: Температура генерации
+        max_retries: Максимум повторов
+        timeout_seconds: Тайм-аут в секундах
         
     Returns:
         Словарь агентов по типам рисков
     """
-    from .base_agent import create_agent_config
+    from .base_agent import AgentConfig
     
     # Базовая конфигурация для агентов-оценщиков
     base_config_params = {
-        "llm_base_url": llm_base_url,
-        "llm_model": llm_model,
-        "temperature": temperature,
-        "max_retries": 3,
-        "timeout_seconds": 120,
+        "max_retries": max_retries,
+        "timeout_seconds": timeout_seconds,
         "use_risk_analysis_client": True  # Все оценщики используют специализированный клиент
     }
     
     # Создаем конфигурации для каждого агента
     configs = {
-        RiskType.ETHICAL: create_agent_config(
+        RiskType.ETHICAL: AgentConfig(
             name="ethical_risk_evaluator",
             description="Агент для оценки этических и дискриминационных рисков",
             **base_config_params
         ),
-        RiskType.STABILITY: create_agent_config(
+        RiskType.STABILITY: AgentConfig(
             name="stability_risk_evaluator", 
             description="Агент для оценки рисков ошибок и нестабильности LLM",
             **base_config_params
         ),
-        RiskType.SECURITY: create_agent_config(
+        RiskType.SECURITY: AgentConfig(
             name="security_risk_evaluator",
             description="Агент для оценки рисков безопасности данных и систем",
             **base_config_params
         ),
-        RiskType.AUTONOMY: create_agent_config(
+        RiskType.AUTONOMY: AgentConfig(
             name="autonomy_risk_evaluator",
             description="Агент для оценки рисков автономности и управления",
             **base_config_params
         ),
-        RiskType.REGULATORY: create_agent_config(
+        RiskType.REGULATORY: AgentConfig(
             name="regulatory_risk_evaluator",
             description="Агент для оценки регуляторных и юридических рисков",
             **base_config_params
         ),
-        RiskType.SOCIAL: create_agent_config(
+        RiskType.SOCIAL: AgentConfig(
             name="social_risk_evaluator",
             description="Агент для оценки социальных и манипулятивных рисков",
             **base_config_params
@@ -1016,15 +1011,94 @@ def create_safe_evaluator_process_method(risk_type: RiskType, risk_description: 
 
 
 
+# Legacy функция для обратной совместимости (DEPRECATED)
+def create_all_evaluator_agents_legacy(
+    llm_base_url: str = "http://127.0.0.1:1234",
+    llm_model: str = "qwen3-4b",
+    temperature: float = 0.1
+) -> Dict[RiskType, EvaluationAgent]:
+    """
+    DEPRECATED: Создание всех агентов-оценщиков (старая версия)
+    Используйте create_all_evaluator_agents() без LLM параметров
+    """
+    import warnings
+    from ..utils.llm_client import LLMConfig
+    
+    warnings.warn(
+        "create_all_evaluator_agents_legacy deprecated. Use create_all_evaluator_agents() without LLM params.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    # Создаем переопределение для legacy кода
+    llm_override = LLMConfig(
+        base_url=llm_base_url,
+        model=llm_model,
+        temperature=temperature,
+        timeout=120
+    )
+    
+    # Базовая конфигурация для агентов-оценщиков
+    base_config_params = {
+        "max_retries": 3,
+        "timeout_seconds": 120,
+        "use_risk_analysis_client": True,
+        "llm_override": llm_override
+    }
+    
+    # Создаем конфигурации для каждого агента
+    configs = {
+        RiskType.ETHICAL: AgentConfig(
+            name="ethical_risk_evaluator",
+            description="Агент для оценки этических и дискриминационных рисков",
+            **base_config_params
+        ),
+        RiskType.STABILITY: AgentConfig(
+            name="stability_risk_evaluator", 
+            description="Агент для оценки рисков ошибок и нестабильности LLM",
+            **base_config_params
+        ),
+        RiskType.SECURITY: AgentConfig(
+            name="security_risk_evaluator",
+            description="Агент для оценки рисков безопасности данных и систем",
+            **base_config_params
+        ),
+        RiskType.AUTONOMY: AgentConfig(
+            name="autonomy_risk_evaluator",
+            description="Агент для оценки рисков автономности и управления",
+            **base_config_params
+        ),
+        RiskType.REGULATORY: AgentConfig(
+            name="regulatory_risk_evaluator",
+            description="Агент для оценки регуляторных и юридических рисков",
+            **base_config_params
+        ),
+        RiskType.SOCIAL: AgentConfig(
+            name="social_risk_evaluator",
+            description="Агент для оценки социальных и манипулятивных рисков",
+            **base_config_params
+        )
+    }
+    
+    # Создаем агентов
+    evaluators = {
+        RiskType.ETHICAL: EthicalRiskEvaluator(configs[RiskType.ETHICAL]),
+        RiskType.STABILITY: StabilityRiskEvaluator(configs[RiskType.STABILITY]),
+        RiskType.SECURITY: SecurityRiskEvaluator(configs[RiskType.SECURITY]),
+        RiskType.AUTONOMY: AutonomyRiskEvaluator(configs[RiskType.AUTONOMY]),
+        RiskType.REGULATORY: RegulatoryRiskEvaluator(configs[RiskType.REGULATORY]),
+        RiskType.SOCIAL: SocialRiskEvaluator(configs[RiskType.SOCIAL])
+    }
+    
+    return evaluators
 
 def create_evaluators_from_env() -> Dict[RiskType, EvaluationAgent]:
-    """Создание агентов-оценщиков из переменных окружения"""
+    """Создание агентов-оценщиков из переменных окружения (ОБНОВЛЕННАЯ версия)"""
     import os
     
     return create_all_evaluator_agents(
-        llm_base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
-        llm_model=os.getenv("LLM_MODEL", "qwen3-4b"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0.1"))
+        max_retries=int(os.getenv("MAX_RETRY_COUNT", "3")),
+        timeout_seconds=120  # Фиксированный тайм-аут для оценщиков
     )
 
 
@@ -1117,8 +1191,9 @@ def get_highest_risk_areas(
 
 
 # Экспорт основных классов и функций
+# Экспорт основных классов и функций (ОБНОВЛЕННЫЙ)
 __all__ = [
-    # Агенты-оценщики
+    # Классы агентов-оценщиков
     "EthicalRiskEvaluator",
     "StabilityRiskEvaluator", 
     "SecurityRiskEvaluator",
@@ -1126,16 +1201,24 @@ __all__ = [
     "RegulatoryRiskEvaluator",
     "SocialRiskEvaluator",
     
-   # Фабрики
+    # Функции создания (НОВЫЕ)
+    "create_risk_evaluator",
     "create_all_evaluator_agents",
-    "create_evaluator_nodes_for_langgraph_safe",  # ← ДОБАВИТЬ ЭТУ СТРОКУ
-    "create_critic_node_function_fixed",         # ← И ЭТУ
     "create_evaluators_from_env",
     
-    # Утилиты
+    # Утилиты для оценки
+    "evaluate_all_risks_parallel",
+    "format_agent_data_for_evaluation", 
     "extract_risk_evaluations_from_results",
-    "calculate_overall_risk_score",
-    "get_highest_risk_areas"
+    "calculate_overall_risk",
+    "get_priority_recommendations",
+    
+    # LangGraph функции
+    "create_evaluator_nodes_for_langgraph_safe",
+    "create_critic_node_function_fixed",
+    
+    # Legacy exports (deprecated)
+    "create_all_evaluator_agents_legacy"
 ]
 
 # ===============================
