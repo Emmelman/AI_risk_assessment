@@ -979,18 +979,75 @@ class RiskAssessmentWorkflow:
             }
             
             # Шаг 7: Сохранение в базу данных (с защитой от ошибок)
-            try:
-                db_manager = await get_db_manager()
-                profile_id = await db_manager.save_agent_profile(agent_profile)
-                saved_assessment_id = assessment_id
-            except Exception as e:
-                self.graph_logger.log_workflow_step(
-                    assessment_id,
-                    "finalization_warning",
-                    f"Ошибка сохранения в БД: {e}"
-                )
-                profile_id = None
-                saved_assessment_id = assessment_id
+            # ИСПРАВЛЕННОЕ принудительное сохранение в БД
+            profile_id = None
+            saved_assessment_id = assessment_id
+
+            for db_attempt in range(3):  # До 3 попыток сохранения
+                try:
+                    print(f"💾 Попытка {db_attempt + 1}/3 сохранения в БД...")
+                    
+                    from src.models.database import get_db_manager
+                    from src.models.risk_models import AgentProfile, create_agent_risk_assessment
+                    
+                    # Создаем правильный профиль агента
+                    agent_profile = AgentProfile(**agent_profile_data)
+                    
+                    # Создаем правильную итоговую оценку
+                    assessment = create_agent_risk_assessment(
+                        assessment_id=assessment_id,
+                        agent_profile=agent_profile,
+                        risk_evaluations=risk_evaluations,
+                        processing_time_seconds=processing_time,
+                        quality_checks_passed=len(successful_evaluations) >= 3
+                    )
+                    
+                    # Получаем менеджер БД
+                    db_manager = await get_db_manager()
+                    
+                    # Сохраняем профиль
+                    print(f"🔄 Сохраняем профиль агента...")
+                    profile_id = await db_manager.save_agent_profile(agent_profile)
+                    print(f"✅ Профиль сохранен с ID: {profile_id}")
+                    
+                    # Сохраняем оценку
+                    print(f"🔄 Сохраняем оценку рисков...")
+                    saved_assessment_id = await db_manager.save_risk_assessment(assessment, profile_id)
+                    print(f"✅ Оценка сохранена с ID: {saved_assessment_id}")
+                    
+                    # Проверяем что данные действительно сохранились
+                    from sqlalchemy import text
+                    async with db_manager.async_session() as session:
+                        result = await session.execute(text(
+                            "SELECT COUNT(*) FROM risk_assessments WHERE id = :assessment_id"
+                        ), {"assessment_id": saved_assessment_id})
+                        assessment_exists = result.scalar() > 0
+                        
+                        result = await session.execute(text(
+                            "SELECT COUNT(*) FROM risk_evaluations WHERE assessment_id = :assessment_id"
+                        ), {"assessment_id": saved_assessment_id})
+                        evaluations_count = result.scalar()
+                        
+                        if assessment_exists and evaluations_count > 0:
+                            print(f"🎉 УСПЕШНО! В БД сохранено:")
+                            print(f"   • 1 assessment")
+                            print(f"   • {evaluations_count} evaluations")
+                            break  # Успешно сохранили, выходим из цикла
+                        else:
+                            raise Exception(f"Проверка БД не прошла: assessment_exists={assessment_exists}, evaluations_count={evaluations_count}")
+                    
+                except Exception as e:
+                    error_msg = f"Ошибка сохранения в БД (попытка {db_attempt + 1}): {e}"
+                    print(f"❌ {error_msg}")
+                    
+                    if db_attempt < 2:  # Не последняя попытка
+                        print(f"⏳ Ждем 5 секунд перед следующей попыткой...")
+                        await asyncio.sleep(5)
+                    else:
+                        # Последняя попытка не удалась
+                        print(f"🚨 КРИТИЧЕСКАЯ ОШИБКА: Не удалось сохранить в БД после 3 попыток!")
+                        profile_id = None
+                        saved_assessment_id = assessment_id
             
             # Шаг 8: Обновляем состояние
             state.update({

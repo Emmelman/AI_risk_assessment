@@ -65,7 +65,7 @@ class RiskAssessmentDB(Base):
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_profile_id = Column(String, nullable=False, index=True)
-    
+    assessment_id = Column(String, nullable=False, index=True)
     # Итоговые результаты
     overall_risk_score = Column(Integer, nullable=False)
     overall_risk_level = Column(String, nullable=False)
@@ -319,6 +319,7 @@ class DatabaseManager:
             db_assessment = RiskAssessmentDB(
                 id=assessment_id,
                 agent_profile_id=profile_id,
+                assessment_id=assessment.assessment_id,
                 overall_risk_score=assessment.overall_risk_score,
                 overall_risk_level=assessment.overall_risk_level.value if hasattr(assessment.overall_risk_level, 'value') else str(assessment.overall_risk_level),
                 # ИСПРАВЛЕНО: highest_risk_areas уже список строк, не нужно .value
