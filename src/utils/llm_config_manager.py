@@ -10,6 +10,33 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    
+    # Ищем .env файл в текущей директории и родительских
+    env_loaded = load_dotenv(verbose=True)  # verbose=True покажет какой файл загружен
+    
+    if not env_loaded:
+        # Пытаемся найти .env в родительских директориях
+        from pathlib import Path
+        current_dir = Path.cwd()
+        for parent in [current_dir] + list(current_dir.parents):
+            env_file = parent / ".env"
+            if env_file.exists():
+                load_dotenv(env_file, verbose=True)
+                print(f"📁 Загружен .env файл: {env_file}")
+                break
+        else:
+            print("⚠️  .env файл не найден, используются системные переменные окружения")
+    else:
+        print("📁 .env файл успешно загружен")
+        
+except ImportError:
+    print("⚠️  python-dotenv не установлен, используются системные переменные окружения")
+    print("   Установите: pip install python-dotenv")
+except Exception as e:
+    print(f"⚠️  Ошибка загрузки .env файла: {e}")
+
 
 class LLMProvider(Enum):
     """Поддерживаемые провайдеры LLM"""
@@ -37,8 +64,120 @@ class LLMConfig:
     verify_ssl_certs: bool = False
     profanity_check: bool = False
     streaming: bool = True
-
-
+    
+    @classmethod
+    def from_manager(cls, **overrides) -> 'LLMConfig':
+        """Создание конфигурации из центрального менеджера с возможностью переопределения"""
+        # ВАЖНО: Избегаем рекурсии, используя глобальный экземпляр напрямую
+        global config_manager
+        
+        if config_manager is None or config_manager._config is None:
+            # Если менеджер не инициализирован, создаем временный
+            temp_manager = LLMConfigManager()
+            base_config = temp_manager.get_config()
+        else:
+            base_config = config_manager.get_config()
+        
+        # Применяем переопределения если есть
+        return cls(
+            base_url=overrides.get('base_url', base_config.base_url),
+            model=overrides.get('model', base_config.model),
+            temperature=overrides.get('temperature', base_config.temperature),
+            max_tokens=overrides.get('max_tokens', base_config.max_tokens),
+            timeout=overrides.get('timeout', base_config.timeout),
+            max_retries=overrides.get('max_retries', base_config.max_retries),
+            retry_delay=overrides.get('retry_delay', base_config.retry_delay),
+            
+            provider=overrides.get('provider', base_config.provider),
+            cert_file=overrides.get('cert_file', base_config.cert_file),
+            key_file=overrides.get('key_file', base_config.key_file),
+            top_p=overrides.get('top_p', base_config.top_p),
+            verify_ssl_certs=overrides.get('verify_ssl_certs', base_config.verify_ssl_certs),
+            profanity_check=overrides.get('profanity_check', base_config.profanity_check),
+            streaming=overrides.get('streaming', base_config.streaming)
+        )
+    
+    @classmethod 
+    def create_default(cls) -> 'LLMConfig':
+        """Создание конфигурации по умолчанию (fallback для обратной совместимости)"""
+        return cls(
+            base_url="http://127.0.0.1:1234",
+            model="qwen3-4b", 
+            temperature=0.1,
+            max_tokens=4096,
+            timeout=120,
+            max_retries=3,
+            retry_delay=1.0,
+            provider=LLMProvider.LM_STUDIO
+        )
+    
+    @classmethod
+    def from_env(cls, **overrides) -> 'LLMConfig':
+        """Альтернативный метод создания конфигурации напрямую из переменных окружения"""
+        # Определяем провайдера
+        provider_str = os.getenv("LLM_PROVIDER", "lm_studio").lower()
+        provider_mapping = {
+            "lm_studio": LLMProvider.LM_STUDIO,
+            "gigachat": LLMProvider.GIGACHAT,
+            "openai": LLMProvider.OPENAI
+        }
+        provider = provider_mapping.get(provider_str, LLMProvider.LM_STUDIO)
+        
+        # Базовые настройки
+        if provider == LLMProvider.GIGACHAT:
+            base_url = os.getenv("GIGACHAT_BASE_URL", "https://gigachat-ift.sberdevices.delta.sbrf.ru/v1")
+            model = os.getenv("GIGACHAT_MODEL", "GigaChat-Max")
+            
+            # Пути к сертификатам
+            cert_path = os.getenv("GIGACHAT_CERT_PATH", "lib/llm/client_cert.pem")
+            key_path = os.getenv("GIGACHAT_KEY_PATH", "lib/llm/client_key.pem")
+            
+            # Проверяем абсолютные пути
+            if not os.path.isabs(cert_path):
+                cert_path = os.path.join(os.getcwd(), cert_path)
+            if not os.path.isabs(key_path):
+                key_path = os.path.join(os.getcwd(), key_path)
+                
+            cert_file = cert_path
+            key_file = key_path
+            top_p = float(os.getenv("GIGACHAT_TOP_P", "0.2"))
+            verify_ssl_certs = os.getenv("GIGACHAT_VERIFY_SSL", "false").lower() == "true"
+            profanity_check = os.getenv("GIGACHAT_PROFANITY_CHECK", "false").lower() == "true"
+            streaming = os.getenv("GIGACHAT_STREAMING", "true").lower() == "true"
+        else:
+            base_url = os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234")
+            model = os.getenv("LLM_MODEL", "qwen3-4b")
+            cert_file = None
+            key_file = None
+            top_p = 0.2
+            verify_ssl_certs = False
+            profanity_check = False
+            streaming = True
+        
+        # Общие настройки
+        temperature = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+        timeout = int(os.getenv("LLM_TIMEOUT", "120"))
+        max_retries = int(os.getenv("MAX_RETRY_COUNT", "3"))
+        retry_delay = float(os.getenv("LLM_RETRY_DELAY", "1.0"))
+        
+        # Применяем переопределения
+        return cls(
+            base_url=overrides.get('base_url', base_url),
+            model=overrides.get('model', model),
+            temperature=overrides.get('temperature', temperature),
+            max_tokens=overrides.get('max_tokens', max_tokens),
+            timeout=overrides.get('timeout', timeout),
+            max_retries=overrides.get('max_retries', max_retries),
+            retry_delay=overrides.get('retry_delay', retry_delay),
+            provider=overrides.get('provider', provider),
+            cert_file=overrides.get('cert_file', cert_file),
+            key_file=overrides.get('key_file', key_file),
+            top_p=overrides.get('top_p', top_p),
+            verify_ssl_certs=overrides.get('verify_ssl_certs', verify_ssl_certs),
+            profanity_check=overrides.get('profanity_check', profanity_check),
+            streaming=overrides.get('streaming', streaming)
+        )
 class LLMConfigManager:
     """
     Singleton менеджер конфигурации LLM.
@@ -337,3 +476,54 @@ def get_llm_config() -> LLMConfig:
 def is_gigachat() -> bool:
     """Быстрая проверка, используется ли GigaChat"""
     return config_manager.is_gigachat()
+
+def force_reload_config():
+    """Принудительная перезагрузка конфигурации (для тестов и переключения провайдеров)"""
+    global config_manager
+    if config_manager._instance is not None:
+        config_manager._instance._config = None
+        config_manager._instance._load_config()
+
+    # НОВОЕ: Сбрасываем глобальный клиент в llm_client.py
+    try:
+        from . import llm_client
+        llm_client._global_client = None
+    except ImportError:
+    # Если llm_client недоступен, игнорируем
+        pass
+
+
+def reset_config_manager():
+    """Полный сброс менеджера конфигурации (для тестов)"""
+    global config_manager
+    LLMConfigManager._instance = None
+    config_manager = LLMConfigManager()    
+
+def print_env_diagnosis():
+    """Диагностика переменных окружения"""
+    import os
+    
+    print("\n🔍 ДИАГНОСТИКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ:")
+    required_vars = ["LLM_PROVIDER"]
+    gigachat_vars = ["GIGACHAT_CERT_PATH", "GIGACHAT_KEY_PATH", "GIGACHAT_BASE_URL", "GIGACHAT_MODEL"]
+    
+    for var in required_vars + gigachat_vars:
+        value = os.getenv(var)
+        status = "✅" if value else "❌"
+        print(f"   {status} {var}: {value if value else 'НЕ УСТАНОВЛЕНА'}")
+    
+    # Проверяем файлы сертификатов
+    if os.getenv("LLM_PROVIDER", "").lower() == "gigachat":
+        cert_path = os.getenv("GIGACHAT_CERT_PATH", "")
+        key_path = os.getenv("GIGACHAT_KEY_PATH", "")
+        
+        print(f"\n🔒 ПРОВЕРКА СЕРТИФИКАТОВ:")
+        for name, path in [("CERT", cert_path), ("KEY", key_path)]:
+            if path:
+                if not os.path.isabs(path):
+                    path = os.path.join(os.getcwd(), path)
+                exists = os.path.exists(path)
+                status = "✅" if exists else "❌"
+                print(f"   {status} {name}: {path} ({'найден' if exists else 'НЕ НАЙДЕН'})")
+            else:
+                print(f"   ❌ {name}: путь не указан")    

@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime
 
 from langgraph.graph import StateGraph, END
-from langgraph.graph.graph import CompiledGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from ..models.risk_models import (
     WorkflowState, RiskType, ProcessingStatus, AgentRiskAssessment,
@@ -20,7 +20,7 @@ from ..agents.profiler_agent import create_profiler_agent, create_profiler_node_
 from ..agents.evaluator_agents import (
     create_all_evaluator_agents, create_evaluator_nodes_for_langgraph_safe,
     extract_risk_evaluations_from_results, calculate_overall_risk_score,
-    get_highest_risk_areas, create_critic_node_function_fixed
+    get_highest_risk_areas, create_critic_node_function_fixed, create_evaluators_from_env
 )
 from ..agents.critic_agent import (
     create_critic_agent, create_quality_check_router
@@ -49,18 +49,23 @@ class RiskAssessmentWorkflow:
         quality_threshold: Optional[float] = None,
         max_retries: Optional[int] = None
     ):
-        # ИЗМЕНЕНО: Используем центральный конфигуратор
+        # ИСПРАВЛЕНО: Всегда используем центральный конфигуратор
         manager = get_llm_config_manager()
         
-        self.llm_base_url = llm_base_url or manager.get_base_url()
-        self.llm_model = llm_model or manager.get_model()
+        # Игнорируем переданные параметры и всегда используем актуальную конфигурацию
+        self.llm_base_url = manager.get_base_url()
+        self.llm_model = manager.get_model()
         self.quality_threshold = quality_threshold if quality_threshold is not None else manager.get_quality_threshold()
         self.max_retries = max_retries if max_retries is not None else manager.get_max_retries()
         
-        # Создаем агентов (теперь с центральной конфигурацией)
-        self.profiler = create_profiler_agent(self.llm_base_url, self.llm_model)
-        self.evaluators = create_all_evaluator_agents(self.llm_base_url, self.llm_model)
-        self.critic = create_critic_agent(self.llm_base_url, self.llm_model, quality_threshold=self.quality_threshold)
+        # ИСПРАВЛЕНО: Используем специальные функции для создания из конфигуратора
+        from ..agents.profiler_agent import create_profiler_from_env
+        from ..agents.evaluator_agents import create_evaluators_from_env
+        from ..agents.critic_agent import create_critic_from_env
+        
+        self.profiler = create_profiler_from_env()
+        self.evaluators = create_evaluators_from_env()
+        self.critic = create_critic_from_env()
         
         # Логгер для LangGraph
         self.graph_logger = get_langgraph_logger()
@@ -68,7 +73,7 @@ class RiskAssessmentWorkflow:
         # Создаем граф
         self.graph = self._build_graph()
     
-    def _build_graph(self) -> CompiledGraph:
+    def _build_graph(self) -> CompiledStateGraph:
         """Построение LangGraph workflow С ДИАГНОСТИКОЙ"""
         
         print("🔍 НАЧИНАЕМ ПОСТРОЕНИЕ ГРАФА")

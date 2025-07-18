@@ -107,25 +107,86 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
     # Создаем workflow
     try:
         console.print("\n[yellow]⚙️ Инициализация workflow...[/yellow]")
+        
+        print("\n🔍 ОТЛАДКА ВЫПОЛНЕНИЯ MAIN.PY:")
+        print("=" * 50)
+
+        # 1. Проверяем какой клиент создается
+        try:
+            from src.utils.llm_client import get_llm_client, diagnose_llm_configuration
+            
+            print("1️⃣ Диагностика конфигурации:")
+            diagnosis = diagnose_llm_configuration()
+            provider = diagnosis["config_manager_info"].get("provider", "unknown")
+            print(f"   Провайдер из конфигуратора: {provider}")
+            
+            print("\n2️⃣ Создание клиента напрямую:")
+            direct_client = await get_llm_client()
+            print(f"   Тип клиента: {type(direct_client).__name__}")
+            
+            print("\n3️⃣ Тестирование прямого клиента:")
+            direct_health = await direct_client.health_check()
+            print(f"   Health check прямого клиента: {'✅' if direct_health else '❌'}")
+            
+            if not direct_health:
+                print("❌ ПРЯМОЙ КЛИЕНТ НЕ ПРОШЕЛ HEALTH CHECK!")
+                return
+            
+        except Exception as e:
+            print(f"❌ Ошибка при создании прямого клиента: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return
+
+        print("\n4️⃣ Создание workflow:")
+        console.print("\n[yellow]⚙️ Инициализация workflow...[/yellow]")
+
         workflow = create_workflow_from_env()
         
-        # Проверяем доступность LLM
+        # ИСПРАВЛЕНО: Универсальная проверка доступности LLM
+        console.print("[yellow]🔍 Проверяем доступность LLM сервера...[/yellow]")
+        
+        # Получаем информацию о текущем провайдере
+        manager = get_llm_config_manager()
+        provider_info = manager.get_info()
+        provider_name = provider_info["provider"]
+        base_url = provider_info["base_url"]
+        model_name = provider_info["model"]
+        
+        console.print(f"[blue]🤖 Провайдер: {provider_name}[/blue]")
+        console.print(f"[blue]🌐 URL: {base_url}[/blue]") 
+        console.print(f"[blue]📦 Модель: {model_name}[/blue]")
+        
+        # Проверяем здоровье LLM
         llm_healthy = await workflow.profiler.health_check()
         if not llm_healthy:
-            console.print("[red]❌ LM Studio недоступен на localhost:1234[/red]")
-            console.print("Убедитесь что LM Studio запущен с настроенной моделью")
+            # УНИВЕРСАЛЬНОЕ сообщение об ошибке для любого провайдера
+            console.print(f"[red]❌ {provider_name} сервер недоступен[/red]")
+            console.print(f"[red]   URL: {base_url}[/red]")
+            
+            if provider_name == "gigachat":
+                console.print("[yellow]Проверьте:[/yellow]")
+                console.print(f"  • Сертификаты: {provider_info.get('cert_file', 'не указан')}")
+                console.print(f"  • Ключ: {provider_info.get('key_file', 'не указан')}")
+                console.print("  • Подключение к интернету")
+                console.print("  • Настройки GigaChat")
+            elif provider_name == "lm_studio":
+                console.print("[yellow]Проверьте:[/yellow]")
+                console.print("  • Запущен ли LM Studio")
+                console.print(f"  • Загружена ли модель: {model_name}")
+                console.print("  • Доступен ли порт 1234")
+            else:
+                console.print(f"[yellow]Проверьте настройки {provider_name}[/yellow]")
+            
             return
         
-        console.print("[green]✅ LLM сервер доступен[/green]")
-        # Показываем текущую конфигурацию
-        manager = get_llm_config_manager()
-        console.print(f"[blue]🤖 Используется модель: {manager.get_model()}[/blue]")
-        console.print(f"[blue]🌐 LLM сервер: {manager.get_base_url()}[/blue]")
+        console.print(f"[green]✅ {provider_name} сервер доступен[/green]")
+        
         if show_reasoning:
             console.print("[blue]🧠 Рассуждения агентов будут отображаться в реальном времени[/blue]")
         
     except Exception as e:
-        console.print(f"[red]❌ Ошибка инициализации: {e}[/red]")
+        console.print(f"[red]❌ Ошибка инициализации workflow: {str(e)}[/red]")
         return
     
     # Запускаем оценку с прогрессом
@@ -432,12 +493,20 @@ class DemoAgent:
         
         # Создаем workflow
         workflow = create_workflow_from_env()
-        
+        console.print("[yellow]🔍 Проверяем доступность LLM...[/yellow]")
+
+        # Получаем информацию о провайдере
+        manager = get_llm_config_manager()
+        provider_info = manager.get_info()
+        provider_name = provider_info["provider"]
         # Проверяем LLM
         llm_healthy = await workflow.profiler.health_check()
         if not llm_healthy:
-            console.print("[red]❌ LM Studio недоступен. Запустите LM Studio с моделью qwen3-4b[/red]")
+            console.print(f"[red]❌ {provider_name} недоступен[/red]")
+            console.print(f"[yellow]Проверьте настройки {provider_name} и повторите попытку[/yellow]")
             return
+
+        console.print(f"[green]✅ {provider_name} доступен[/green]")
         
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
             task = progress.add_task("🔄 Демонстрационная оценка...", total=None)
@@ -478,22 +547,13 @@ class DemoAgent:
 # Найдите и замените функцию _display_assessment_result
 
 async def _display_assessment_result(result, output_file=None):
-    """ИСПРАВЛЕННОЕ отображение результатов оценки"""
+    """ИСПРАВЛЕННОЕ отображение без дублирования"""
     
-    # ИСПРАВЛЕНИЕ: проверяем разные возможные ключи
     assessment = result.get("final_assessment") or result.get("assessment")
     
     if not assessment:
         console.print("[red]❌ Нет данных для отображения[/red]")
         console.print(f"[dim]DEBUG: Доступные ключи в result: {list(result.keys())}[/dim]")
-        
-        # Пытаемся отобразить хотя бы базовую информацию из result
-        if result.get("success"):
-            assessment_id = result.get("assessment_id", "unknown")
-            processing_time = result.get("processing_time", 0)
-            console.print(f"[yellow]Assessment ID: {assessment_id}[/yellow]")
-            console.print(f"[yellow]Время выполнения: {processing_time:.1f} секунд[/yellow]")
-            console.print("[yellow]⚠️ Детальные результаты недоступны[/yellow]")
         return
     
     # Извлекаем данные с fallback значениями
@@ -561,20 +621,20 @@ async def _display_assessment_result(result, output_file=None):
                     "Неверный формат данных"
                 )
         
-        console.print(table)
+        console.print(table)  # ИСПРАВЛЕНО: Выводим таблицу только ОДИН раз
     else:
         console.print("[yellow]⚠️ Детальные оценки рисков недоступны[/yellow]")
     
-    # Рекомендации
+    # Рекомендации (ОДИН раз!)
     recommendations = assessment.get("priority_recommendations", [])
     if recommendations:
         console.print("\n[bold green]💡 Приоритетные рекомендации:[/bold green]")
-        for i, rec in enumerate(recommendations[:10], 1):  # Показываем до 10 рекомендаций
+        for i, rec in enumerate(recommendations[:10], 1):
             console.print(f"  {i}. {rec}")
     else:
         console.print("\n[yellow]⚠️ Рекомендации недоступны[/yellow]")
     
-    # Показываем сводку по качеству (если доступна)
+    # Качество оценки (ОДИН раз!)
     eval_summary = assessment.get("evaluation_summary", {})
     if eval_summary:
         success_rate = eval_summary.get("success_rate", 0)
@@ -591,27 +651,12 @@ async def _display_assessment_result(result, output_file=None):
         else:
             console.print("  • [red]⚠️ Низкое качество результатов[/red]")
     
-    # Сводка по найденным проблемам 
-    highest_risks = []
-    if risk_evaluations:
-        for risk_type, evaluation in risk_evaluations.items():
-            if isinstance(evaluation, dict):
-                score = evaluation.get('total_score', 0)
-                if score > 15:  # High risk
-                    highest_risks.append(f"{risk_names.get(risk_type, risk_type)} ({score}/25)")
-    
-    if highest_risks:
-        console.print(f"\n[bold red]⚠️ Области высокого риска:[/bold red]")
-        for risk in highest_risks:
-            console.print(f"  • {risk}")
-    
     # Сохранение в файл
     if output_file:
         try:
             output_path = Path(output_file)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Сохраняем весь результат
             save_data = {
                 "assessment": assessment,
                 "metadata": {
@@ -620,7 +665,7 @@ async def _display_assessment_result(result, output_file=None):
                     "tool": "AI_Risk_Assessment",
                     "assessment_id": assessment_id
                 },
-                "raw_result": result  # Включаем полный результат для отладки
+                "raw_result": result
             }
             
             with open(output_path, 'w', encoding='utf-8') as f:

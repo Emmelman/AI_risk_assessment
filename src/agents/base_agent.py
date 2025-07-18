@@ -46,13 +46,20 @@ class BaseAgent(ABC):
         self.config = config
         self.logger = get_logger()
         
-        # Инициализируем LLM клиент
-        if config.use_risk_analysis_client:
-            self.llm_client = RiskAnalysisLLMClient(config.llm_config)
-        else:
-            self.llm_client = LLMClient(config.llm_config)
+        # ИСПРАВЛЕНО: Используем фабрику для правильного создания клиента
+        from ..utils.llm_client import create_llm_client
         
-        # Статистика работы агента
+        client_type = "risk_analysis" if config.use_risk_analysis_client else "standard"
+        
+        # Фабрика автоматически определит нужный тип клиента по провайдеру
+        self.llm_client = create_llm_client(
+            client_type=client_type,
+            base_url=config.llm_config.base_url,
+            model=config.llm_config.model,
+            temperature=config.llm_config.temperature
+        )
+        
+        # Статистика агента
         self.stats = {
             "total_requests": 0,
             "successful_requests": 0,
@@ -759,39 +766,36 @@ def create_agent_config(
     """
     Создание конфигурации агента
     ОБНОВЛЕНО: Использует центральный конфигуратор
-    
-    Args:
-        name: Имя агента
-        description: Описание агента
-        llm_base_url: URL LLM сервера (None = из конфигуратора)
-        llm_model: Модель LLM (None = из конфигуратора)
-        temperature: Температура генерации (None = из конфигуратора)
-        max_retries: Максимум повторов (None = из конфигуратора)
-        timeout_seconds: Тайм-аут в секундах (None = из конфигуратора)
-        use_risk_analysis_client: Использовать специализированный клиент
-        
-    Returns:
-        Конфигурация агента
     """
     # ИЗМЕНЕНО: Получаем настройки из центрального конфигуратора
     manager = get_llm_config_manager()
+    base_config = manager.get_config()  # Получаем полную конфигурацию
     
     # Используем значения из конфигуратора или переопределяем
-    actual_base_url = llm_base_url or manager.get_base_url()
-    actual_model = llm_model or manager.get_model()
-    actual_temperature = temperature if temperature is not None else manager.get_temperature()
-    actual_max_retries = max_retries if max_retries is not None else manager.get_max_retries()
-    actual_timeout = timeout_seconds if timeout_seconds is not None else manager.get_timeout()
+    actual_base_url = llm_base_url or base_config.base_url
+    actual_model = llm_model or base_config.model
+    actual_temperature = temperature if temperature is not None else base_config.temperature
+    actual_max_retries = max_retries if max_retries is not None else base_config.max_retries
+    actual_timeout = timeout_seconds if timeout_seconds is not None else base_config.timeout
     
-    # Создаем LLM конфигурацию
+    # ИСПРАВЛЕНО: Создаем LLM конфигурацию со ВСЕМИ полями включая provider
     llm_config = LLMConfig(
         base_url=actual_base_url,
         model=actual_model,
         temperature=actual_temperature,
-        max_tokens=manager.get_max_tokens(),
+        max_tokens=base_config.max_tokens,
         timeout=actual_timeout,
         max_retries=actual_max_retries,
-        retry_delay=manager.get_retry_delay()
+        retry_delay=base_config.retry_delay,
+        
+        # КРИТИЧНО: Передаем провайдер и все специфичные поля
+        provider=base_config.provider,
+        cert_file=base_config.cert_file,
+        key_file=base_config.key_file,
+        top_p=base_config.top_p,
+        verify_ssl_certs=base_config.verify_ssl_certs,
+        profanity_check=base_config.profanity_check,
+        streaming=base_config.streaming
     )
     
     return AgentConfig(
