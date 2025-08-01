@@ -3,7 +3,8 @@
 CLI интерфейс для системы оценки рисков ИИ-агентов
 Основная точка входа в систему
 """
-
+from dotenv import load_dotenv
+load_dotenv()
 import asyncio
 import json
 import sys
@@ -83,7 +84,7 @@ async def assess(ctx, source_files, agent_name, output, quality_threshold, max_r
         if path.exists():
             if path.is_dir():
                 # Если папка, берем все файлы
-                for ext in ['*.py', '*.js', '*.java', '*.txt', '*.md', '*.json', '*.yaml']:
+                for ext in ['*.py', '*.js', '*.java', '*.txt', '*.md', '*.json', '*.yaml', '*.docx', '*.xlsx', '*.xls', '*.pdf']:
                     validated_files.extend([str(f) for f in path.rglob(ext)])
             else:
                 validated_files.append(str(path.absolute()))

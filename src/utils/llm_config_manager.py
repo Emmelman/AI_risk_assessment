@@ -101,13 +101,13 @@ class LLMConfig:
     def create_default(cls) -> 'LLMConfig':
         """Создание конфигурации по умолчанию (fallback для обратной совместимости)"""
         return cls(
-            base_url="http://127.0.0.1:1234",
-            model="qwen3-4b", 
-            temperature=0.1,
-            max_tokens=4096,
-            timeout=120,
-            max_retries=3,
-            retry_delay=1.0,
+            base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
+            model=os.getenv("LLM_MODEL", "qwen3-4b"),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4096")),
+            timeout=int(os.getenv("LLM_TIMEOUT", "120")),
+            max_retries=int(os.getenv("MAX_RETRY_COUNT", "3")),
+            retry_delay=float(os.getenv("LLM_RETRY_DELAY", "1.0")),
             provider=LLMProvider.LM_STUDIO
         )
     
