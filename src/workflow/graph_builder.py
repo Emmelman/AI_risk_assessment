@@ -853,7 +853,12 @@ class RiskAssessmentWorkflow:
         try:
             # Шаг 1: Собираем профиль агента
             agent_profile_data = state.get("agent_profile", {})
-            
+            if "detailed_summary" in agent_profile_data:
+                self.graph_logger.log_workflow_step(
+                    assessment_id,
+                    "detailed_summary_available", 
+                    "✅ Детальное саммари включено в профиль агента"
+                )
             # Создаем объект AgentProfile с защитой от ошибок
             try:
                 agent_profile = AgentProfile(**agent_profile_data)

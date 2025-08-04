@@ -194,7 +194,7 @@ class EthicalRiskEvaluator(EvaluationAgent):
 
     def _format_agent_data(self, agent_profile: Dict[str, Any]) -> str:
         """Форматирование данных агента для анализа этических рисков"""
-        return f"""ПРОФИЛЬ АГЕНТА:
+        basic_info = f"""ПРОФИЛЬ АГЕНТА:
 Название: {agent_profile.get('name', 'Unknown')}
 Тип: {agent_profile.get('agent_type', 'unknown')}
 Описание: {agent_profile.get('description', 'Не указано')}
@@ -209,7 +209,34 @@ class EthicalRiskEvaluator(EvaluationAgent):
 {chr(10).join(agent_profile.get('guardrails', ['Не найдены']))}
 
 ВНЕШНИЕ API: {', '.join(agent_profile.get('external_apis', ['Нет']))}"""
+        # ДОБАВЛЯЕМ ДЕТАЛЬНОЕ САММАРИ
+        detailed_summary = agent_profile.get('detailed_summary', {})
+        if detailed_summary:
+            summary_section = f"""
 
+=== ДЕТАЛЬНОЕ САММАРИ ===
+
+ОБЗОР АГЕНТА:
+{detailed_summary.get('overview', 'Информация отсутствует')}
+
+ТЕХНИЧЕСКАЯ АРХИТЕКТУРА:
+{detailed_summary.get('technical_architecture', 'Информация отсутствует')}
+
+ОПЕРАЦИОННАЯ МОДЕЛЬ:
+{detailed_summary.get('operational_model', 'Информация отсутствует')}
+
+АНАЛИЗ РИСКОВ:
+{detailed_summary.get('risk_analysis', 'Информация отсутствует')}
+
+РЕКОМЕНДАЦИИ ПО БЕЗОПАСНОСТИ:
+{detailed_summary.get('security_recommendations', 'Информация отсутствует')}
+
+ВЫВОДЫ:
+{detailed_summary.get('conclusions', 'Информация отсутствует')}"""
+            
+            return basic_info + summary_section
+        
+        return basic_info
 
 class StabilityRiskEvaluator(EvaluationAgent):
     """Агент-оценщик рисков ошибок и нестабильности LLM"""
@@ -399,7 +426,7 @@ class StabilityRiskEvaluator(EvaluationAgent):
 
     def _format_agent_data(self, agent_profile: Dict[str, Any]) -> str:
         """Форматирование данных для анализа стабильности"""
-        return f"""ТЕХНИЧЕСКИЙ ПРОФИЛЬ АГЕНТА:
+        basic_info = f"""ТЕХНИЧЕСКИЙ ПРОФИЛЬ АГЕНТА:
 Название: {agent_profile.get('name', 'Unknown')}
 LLM Модель: {agent_profile.get('llm_model', 'unknown')}
 Тип агента: {agent_profile.get('agent_type', 'unknown')}
@@ -414,7 +441,34 @@ APIs: {', '.join(agent_profile.get('external_apis', ['Нет']))}
 
 МОНИТОРИНГ И КОНТРОЛЬ:
 Ограничения: {chr(10).join(agent_profile.get('guardrails', ['Не найдены']))}"""
+# ДОБАВЛЯЕМ ДЕТАЛЬНОЕ САММАРИ
+        detailed_summary = agent_profile.get('detailed_summary', {})
+        if detailed_summary:
+            summary_section = f"""
 
+=== ДЕТАЛЬНОЕ САММАРИ ===
+
+ОБЗОР АГЕНТА:
+{detailed_summary.get('overview', 'Информация отсутствует')}
+
+ТЕХНИЧЕСКАЯ АРХИТЕКТУРА:
+{detailed_summary.get('technical_architecture', 'Информация отсутствует')}
+
+ОПЕРАЦИОННАЯ МОДЕЛЬ:
+{detailed_summary.get('operational_model', 'Информация отсутствует')}
+
+АНАЛИЗ РИСКОВ:
+{detailed_summary.get('risk_analysis', 'Информация отсутствует')}
+
+РЕКОМЕНДАЦИИ ПО БЕЗОПАСНОСТИ:
+{detailed_summary.get('security_recommendations', 'Информация отсутствует')}
+
+ВЫВОДЫ:
+{detailed_summary.get('conclusions', 'Информация отсутствует')}"""
+            
+            return basic_info + summary_section
+        
+        return basic_info
 
 class SecurityRiskEvaluator(EvaluationAgent):
     """Агент-оценщик рисков безопасности данных и систем"""
@@ -590,7 +644,7 @@ class SecurityRiskEvaluator(EvaluationAgent):
 
     def _format_agent_data(self, agent_profile: Dict[str, Any]) -> str:
         """Форматирование данных для анализа безопасности"""
-        return f"""ПРОФИЛЬ БЕЗОПАСНОСТИ АГЕНТА:
+        basic_info = f"""ПРОФИЛЬ БЕЗОПАСНОСТИ АГЕНТА:
 Название: {agent_profile.get('name', 'Unknown')}
 Доступ к данным: {', '.join(agent_profile.get('data_access', []))}
 Внешние APIs: {', '.join(agent_profile.get('external_apis', ['Нет']))}
@@ -605,7 +659,34 @@ class SecurityRiskEvaluator(EvaluationAgent):
 ОПЕРАЦИОННЫЙ КОНТЕКСТ:
 Целевая аудитория: {agent_profile.get('target_audience', 'Не указано')}
 Операций в час: {agent_profile.get('operations_per_hour', 'Не указано')}"""
+# ДОБАВЛЯЕМ ДЕТАЛЬНОЕ САММАРИ
+        detailed_summary = agent_profile.get('detailed_summary', {})
+        if detailed_summary:
+            summary_section = f"""
 
+=== ДЕТАЛЬНОЕ САММАРИ ===
+
+ОБЗОР АГЕНТА:
+{detailed_summary.get('overview', 'Информация отсутствует')}
+
+ТЕХНИЧЕСКАЯ АРХИТЕКТУРА:
+{detailed_summary.get('technical_architecture', 'Информация отсутствует')}
+
+ОПЕРАЦИОННАЯ МОДЕЛЬ:
+{detailed_summary.get('operational_model', 'Информация отсутствует')}
+
+АНАЛИЗ РИСКОВ:
+{detailed_summary.get('risk_analysis', 'Информация отсутствует')}
+
+РЕКОМЕНДАЦИИ ПО БЕЗОПАСНОСТИ:
+{detailed_summary.get('security_recommendations', 'Информация отсутствует')}
+
+ВЫВОДЫ:
+{detailed_summary.get('conclusions', 'Информация отсутствует')}"""
+            
+            return basic_info + summary_section
+        
+        return basic_info
 
 class AutonomyRiskEvaluator(EvaluationAgent):
     """Агент-оценщик рисков автономности и управления"""
@@ -790,7 +871,7 @@ class AutonomyRiskEvaluator(EvaluationAgent):
 
     def _format_agent_data(self, agent_profile: Dict[str, Any]) -> str:
         """Форматирование данных для анализа автономности"""
-        return f"""ПРОФИЛЬ АВТОНОМНОСТИ АГЕНТА:
+        basic_info = f"""ПРОФИЛЬ АВТОНОМНОСТИ АГЕНТА:
 Название: {agent_profile.get('name', 'Unknown')}
 Уровень автономности: {agent_profile.get('autonomy_level', 'unknown')}
 Тип агента: {agent_profile.get('agent_type', 'unknown')}
@@ -809,7 +890,34 @@ class AutonomyRiskEvaluator(EvaluationAgent):
 ИНТЕГРАЦИИ:
 Внешние API: {', '.join(agent_profile.get('external_apis', ['Нет']))}
 Доступ к данным: {', '.join(agent_profile.get('data_access', []))}"""
+# ДОБАВЛЯЕМ ДЕТАЛЬНОЕ САММАРИ
+        detailed_summary = agent_profile.get('detailed_summary', {})
+        if detailed_summary:
+            summary_section = f"""
 
+=== ДЕТАЛЬНОЕ САММАРИ ===
+
+ОБЗОР АГЕНТА:
+{detailed_summary.get('overview', 'Информация отсутствует')}
+
+ТЕХНИЧЕСКАЯ АРХИТЕКТУРА:
+{detailed_summary.get('technical_architecture', 'Информация отсутствует')}
+
+ОПЕРАЦИОННАЯ МОДЕЛЬ:
+{detailed_summary.get('operational_model', 'Информация отсутствует')}
+
+АНАЛИЗ РИСКОВ:
+{detailed_summary.get('risk_analysis', 'Информация отсутствует')}
+
+РЕКОМЕНДАЦИИ ПО БЕЗОПАСНОСТИ:
+{detailed_summary.get('security_recommendations', 'Информация отсутствует')}
+
+ВЫВОДЫ:
+{detailed_summary.get('conclusions', 'Информация отсутствует')}"""
+            
+            return basic_info + summary_section
+        
+        return basic_info
 
 class RegulatoryRiskEvaluator(EvaluationAgent):
     """Агент-оценщик регуляторных и юридических рисков"""
@@ -998,7 +1106,7 @@ class RegulatoryRiskEvaluator(EvaluationAgent):
 
     def _format_agent_data(self, agent_profile: Dict[str, Any]) -> str:
         """Форматирование данных для регуляторного анализа"""
-        return f"""РЕГУЛЯТОРНЫЙ ПРОФИЛЬ АГЕНТА:
+        basic_info = f"""РЕГУЛЯТОРНЫЙ ПРОФИЛЬ АГЕНТА:
 Название: {agent_profile.get('name', 'Unknown')}
 Тип деятельности: {agent_profile.get('agent_type', 'unknown')}
 Целевая аудитория: {agent_profile.get('target_audience', 'Не указано')}
@@ -1019,7 +1127,34 @@ class RegulatoryRiskEvaluator(EvaluationAgent):
 ТЕХНИЧЕСКИЕ ДЕТАЛИ:
 LLM: {agent_profile.get('llm_model', 'unknown')}
 Системные инструкции: {chr(10).join(agent_profile.get('system_prompts', ['Не найдены']))}"""
+# ДОБАВЛЯЕМ ДЕТАЛЬНОЕ САММАРИ
+        detailed_summary = agent_profile.get('detailed_summary', {})
+        if detailed_summary:
+            summary_section = f"""
 
+=== ДЕТАЛЬНОЕ САММАРИ ===
+
+ОБЗОР АГЕНТА:
+{detailed_summary.get('overview', 'Информация отсутствует')}
+
+ТЕХНИЧЕСКАЯ АРХИТЕКТУРА:
+{detailed_summary.get('technical_architecture', 'Информация отсутствует')}
+
+ОПЕРАЦИОННАЯ МОДЕЛЬ:
+{detailed_summary.get('operational_model', 'Информация отсутствует')}
+
+АНАЛИЗ РИСКОВ:
+{detailed_summary.get('risk_analysis', 'Информация отсутствует')}
+
+РЕКОМЕНДАЦИИ ПО БЕЗОПАСНОСТИ:
+{detailed_summary.get('security_recommendations', 'Информация отсутствует')}
+
+ВЫВОДЫ:
+{detailed_summary.get('conclusions', 'Информация отсутствует')}"""
+            
+            return basic_info + summary_section
+        
+        return basic_info
 
 class SocialRiskEvaluator(EvaluationAgent):
     """Агент-оценщик социальных и манипулятивных рисков"""
@@ -1215,7 +1350,7 @@ class SocialRiskEvaluator(EvaluationAgent):
         
     def _format_agent_data(self, agent_profile: Dict[str, Any]) -> str:
         """Форматирование данных для анализа социальных рисков"""
-        return f"""СОЦИАЛЬНЫЙ ПРОФИЛЬ АГЕНТА:
+        basic_info = f"""СОЦИАЛЬНЫЙ ПРОФИЛЬ АГЕНТА:
 Название: {agent_profile.get('name', 'Unknown')}
 Целевая аудитория: {agent_profile.get('target_audience', 'Не указано')}
 Тип взаимодействия: {agent_profile.get('agent_type', 'unknown')}
@@ -1233,7 +1368,34 @@ class SocialRiskEvaluator(EvaluationAgent):
 КОНТЕКСТ ИСПОЛЬЗОВАНИЯ:
 Доступ к данным: {', '.join(agent_profile.get('data_access', []))}
 Автономность: {agent_profile.get('autonomy_level', 'unknown')}"""
+# ДОБАВЛЯЕМ ДЕТАЛЬНОЕ САММАРИ
+        detailed_summary = agent_profile.get('detailed_summary', {})
+        if detailed_summary:
+            summary_section = f"""
 
+=== ДЕТАЛЬНОЕ САММАРИ ===
+
+ОБЗОР АГЕНТА:
+{detailed_summary.get('overview', 'Информация отсутствует')}
+
+ТЕХНИЧЕСКАЯ АРХИТЕКТУРА:
+{detailed_summary.get('technical_architecture', 'Информация отсутствует')}
+
+ОПЕРАЦИОННАЯ МОДЕЛЬ:
+{detailed_summary.get('operational_model', 'Информация отсутствует')}
+
+АНАЛИЗ РИСКОВ:
+{detailed_summary.get('risk_analysis', 'Информация отсутствует')}
+
+РЕКОМЕНДАЦИИ ПО БЕЗОПАСНОСТИ:
+{detailed_summary.get('security_recommendations', 'Информация отсутствует')}
+
+ВЫВОДЫ:
+{detailed_summary.get('conclusions', 'Информация отсутствует')}"""
+            
+            return basic_info + summary_section
+        
+        return basic_info
 
 # ===============================
 # Фабрики и утилиты для создания агентов

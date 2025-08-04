@@ -98,7 +98,10 @@ class AgentProfile(BaseModel):
     system_prompts: List[str] = Field(default_factory=list, description="Системные промпты")
     guardrails: List[str] = Field(default_factory=list, description="Ограничения безопасности")
     source_files: List[str] = Field(default_factory=list, description="Исходные файлы анализа")
-    
+    detailed_summary: Optional[Dict[str, str]] = Field(
+        None, 
+        description="Детальное саммари агента с разделами анализа"
+    )
     # Метаданные
     created_at: Optional[datetime] = Field(default=None, description="Время создания")
     updated_at: Optional[datetime] = Field(default=None, description="Время обновления")
@@ -462,7 +465,7 @@ class WorkflowState(BaseModel):
     
     # Входные данные
     source_files: List[str] = Field(default_factory=list, description="Файлы для анализа")
-    agent_profile: Optional[Dict[str, Any]] = Field(None, description="Профиль агента")
+    agent_profile: Optional[Dict[str, Any]] = Field(None, description="Профиль агента с детальным саммари")
     
     # Промежуточные результаты
     profiling_result: Optional[Dict[str, Any]] = Field(None, description="Результат профилирования")

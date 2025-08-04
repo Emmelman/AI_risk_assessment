@@ -300,7 +300,15 @@ class ProfilerAgent(AnalysisAgent):
     "technical_details": "дополнительные технические подробности о реализации",
     "risk_factors": ["выявленные факторы риска"],
     "capabilities": ["полный список возможностей агента"],
-    "limitations": ["известные ограничения"]
+    "limitations": ["известные ограничения"],
+    "detailed_summary": {
+            "overview": "Подробное описание назначения, функций и области применения агента - минимум 200 слов",
+            "technical_architecture": "Детальный анализ технической реализации, используемых технологий, интеграций - минимум 150 слов",
+            "operational_model": "Описание процессов работы, взаимодействия с пользователями, бизнес-логики - минимум 150 слов",
+            "risk_analysis": "Выявленные риски, уязвимости, потенциальные проблемы с детальным обоснованием - минимум 200 слов",
+            "security_recommendations": "Конкретные меры по снижению рисков и улучшению безопасности - минимум 100 слов",
+            "conclusions": "Итоговая оценка агента, ключевые моменты для внимания - минимум 100 слов"
+        }
 }
 Создай максимально подробный профиль с детальным анализом всех аспектов агента.
 === ДЕТАЛЬНОЕ САММАРИ ===
@@ -353,8 +361,49 @@ class ProfilerAgent(AnalysisAgent):
             revenue_per_operation=profile_data.get("revenue_per_operation"),
             system_prompts=profile_data.get("system_prompts", []),
             guardrails=profile_data.get("guardrails", []),
-            source_files=collected_data.get("source_files", [])
+            source_files=collected_data.get("source_files", []),
+            detailed_summary=profile_data.get("detailed_summary")
         )
+        
+        if hasattr(agent_profile, 'detailed_summary') and agent_profile.detailed_summary:
+            # Логируем успешное создание саммари
+            summary_sections = list(agent_profile.detailed_summary.keys())
+            self.logger.bind_context(assessment_id, self.name).info(
+                f"✅ Профайлер создал детальное саммари с разделами: {', '.join(summary_sections)}"
+            )
+            
+            # Дополнительная диагностика размеров
+            total_summary_length = sum(len(str(section)) for section in agent_profile.detailed_summary.values())
+            self.logger.bind_context(assessment_id, self.name).debug(
+                f"📊 Общий размер детального саммари: {total_summary_length} символов"
+            )
+            
+            # Проверяем каждый раздел
+            for section_name, section_content in agent_profile.detailed_summary.items():
+                section_length = len(str(section_content))
+                if section_length < 50:
+                    self.logger.bind_context(assessment_id, self.name).warning(
+                        f"⚠️ Раздел '{section_name}' слишком короткий: {section_length} символов"
+                    )
+                else:
+                    self.logger.bind_context(assessment_id, self.name).debug(
+                        f"✅ Раздел '{section_name}': {section_length} символов"
+                    )
+        else:
+            # Логируем отсутствие саммари
+            self.logger.bind_context(assessment_id, self.name).warning(
+                "⚠️ Детальное саммари НЕ создано профайлером"
+            )
+            
+            # Диагностируем причины
+            if not hasattr(agent_profile, 'detailed_summary'):
+                self.logger.bind_context(assessment_id, self.name).error(
+                    "❌ У AgentProfile отсутствует поле detailed_summary - проверьте модель данных"
+                )
+            elif agent_profile.detailed_summary is None:
+                self.logger.bind_context(assessment_id, self.name).warning(
+                    "⚠️ Поле detailed_summary равно None - проверьте промпт и ответ LLM"
+                )
         
         return agent_profile
     
