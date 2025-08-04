@@ -229,38 +229,125 @@ class BaseAgent(ABC):
         self,
         data_to_analyze: str,
         extraction_prompt: str,
-        assessment_id: str = "unknown",
+        assessment_id: str,
         expected_format: str = "JSON"
     ) -> Dict[str, Any]:
         """
         Вызов LLM для получения структурированных данных
-        
+       
         Args:
             data_to_analyze: Данные для анализа
             extraction_prompt: Промпт для извлечения
             assessment_id: ID оценки
             expected_format: Ожидаемый формат ответа
-            
+           
         Returns:
             Структурированные данные
         """
         if not isinstance(self.llm_client, (LLMClient, RiskAnalysisLLMClient)):
             raise ValueError("LLM клиент не поддерживает структурированные запросы")
         
+        # 🔍 ДИАГНОСТИКА: Проверяем длину промпта
+        prompt_length = len(extraction_prompt)
+        data_length = len(data_to_analyze)
+        bound_logger = self.logger.bind_context(assessment_id, self.name)
+        
+        bound_logger.info(f"📏 Длина системного промпта: {prompt_length} символов")
+        bound_logger.info(f"📏 Длина данных для анализа: {data_length} символов")
+        bound_logger.info(f"📏 Общий размер контекста: {prompt_length + data_length} символов")
+        
+        if prompt_length < 3000:
+            bound_logger.warning(f"⚠️ Системный промпт может быть слишком коротким для детальных требований")
+        else:
+            bound_logger.info(f"✅ Системный промпт достаточно длинный для детальных требований")
+        
+        # Проверяем требования к длине в промпте
+        if "МИНИМУМ 1000 символов" in extraction_prompt or "МИНИМУМ 800 символов" in extraction_prompt:
+            bound_logger.info("✅ В промпте найдены требования к минимальной длине рассуждений")
+        else:
+            bound_logger.warning("⚠️ В промпте НЕ найдены требования к длине рассуждений")
+       
+        # ВАШ СУЩЕСТВУЮЩИЙ ВЫЗОВ
         result = await self.llm_client.extract_structured_data(
             data_to_analyze=data_to_analyze,
             extraction_prompt=extraction_prompt,
             expected_format=expected_format
         )
         
-        # Логируем вызов
+        # 🔍 ДИАГНОСТИКА: Проверяем результат
+        if result:
+            # Логируем общую информацию о результате
+            if isinstance(result, dict):
+                bound_logger.info(f"✅ LLM вернул структурированный результат с {len(result)} полями")
+                
+                # Специальная проверка для JSON с reasoning полями
+                if expected_format.upper() == "JSON":
+                    prob_reasoning = result.get("probability_reasoning", "")
+                    impact_reasoning = result.get("impact_reasoning", "")
+                    
+                    if prob_reasoning:
+                        prob_len = len(str(prob_reasoning))
+                        bound_logger.info(f"📊 probability_reasoning: {prob_len} символов")
+                        if prob_len < 500:
+                            bound_logger.warning(f"⚠️ probability_reasoning слишком короткий: {prob_len} < 500")
+                        elif prob_len >= 1000:
+                            bound_logger.info(f"🎯 probability_reasoning отличной длины: {prob_len} >= 1000")
+                        else:
+                            bound_logger.info(f"✅ probability_reasoning нормальной длины: {prob_len}")
+                    
+                    if impact_reasoning:
+                        impact_len = len(str(impact_reasoning))
+                        bound_logger.info(f"📊 impact_reasoning: {impact_len} символов")
+                        if impact_len < 500:
+                            bound_logger.warning(f"⚠️ impact_reasoning слишком короткий: {impact_len} < 500")
+                        elif impact_len >= 1000:
+                            bound_logger.info(f"🎯 impact_reasoning отличной длины: {impact_len} >= 1000")
+                        else:
+                            bound_logger.info(f"✅ impact_reasoning нормальной длины: {impact_len}")
+                    
+                    # Проверяем другие поля
+                    for field_name in ["key_factors", "recommendations", "risk_level", "total_score"]:
+                        if field_name in result:
+                            field_value = result[field_name]
+                            bound_logger.debug(f"🔍 {field_name}: {type(field_value).__name__} = {field_value}")
+            
+            elif isinstance(result, str):
+                result_length = len(result)
+                bound_logger.info(f"📏 LLM вернул строку длиной: {result_length} символов")
+                
+                # Пытаемся парсить JSON из строки для дополнительной диагностики
+                try:
+                    import json
+                    parsed_result = json.loads(result)
+                    bound_logger.info(f"✅ Строка успешно парсится как JSON с {len(parsed_result)} полями")
+                    
+                    # Повторяем проверки для распарсенного JSON
+                    prob_reasoning = parsed_result.get("probability_reasoning", "")
+                    impact_reasoning = parsed_result.get("impact_reasoning", "")
+                    
+                    if prob_reasoning:
+                        prob_len = len(str(prob_reasoning))
+                        bound_logger.info(f"📊 (из строки) probability_reasoning: {prob_len} символов")
+                    
+                    if impact_reasoning:
+                        impact_len = len(str(impact_reasoning))
+                        bound_logger.info(f"📊 (из строки) impact_reasoning: {impact_len} символов")
+                        
+                except json.JSONDecodeError as e:
+                    bound_logger.warning(f"⚠️ Результат-строка не является валидным JSON: {e}")
+                except Exception as e:
+                    bound_logger.debug(f"Ошибка при парсинге JSON: {e}")
+        else:
+            bound_logger.error("❌ LLM вернул пустой или None результат")
+       
+        # ВАШ СУЩЕСТВУЮЩИЙ КОД ЛОГИРОВАНИЯ
         self.logger.log_llm_request(
             self.name,
             assessment_id,
             self.llm_client.config.model,
             0  # Токены уже залогированы внутри extract_structured_data
         )
-        
+       
         return result
     
     def validate_result(self, result_data: Dict[str, Any]) -> bool:
