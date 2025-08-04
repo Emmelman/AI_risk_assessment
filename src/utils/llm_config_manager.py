@@ -104,7 +104,9 @@ class LLMConfig:
             base_url=os.getenv("LLM_BASE_URL", "http://127.0.0.1:1234"),
             model=os.getenv("LLM_MODEL", "qwen3-4b"),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+
             max_tokens=int(os.getenv("LLM_MAX_TOKENS", "8192")),
+
             timeout=int(os.getenv("LLM_TIMEOUT", "120")),
             max_retries=int(os.getenv("MAX_RETRY_COUNT", "3")),
             retry_delay=float(os.getenv("LLM_RETRY_DELAY", "1.0")),
