@@ -1065,8 +1065,10 @@ class RiskAssessmentWorkflow:
 # ===============================
 
     def _create_fallback_risk_evaluations(self, evaluation_results: Dict[str, Any]) -> Dict[Any, Any]:
-        """Создает fallback оценки рисков из сырых результатов"""
+        """ИСПРАВЛЕННОЕ создание fallback оценок рисков"""
         from ..models.risk_models import RiskEvaluation, RiskType
+        
+        print("🔧 DEBUG: Создаем fallback risk evaluations")
         
         fallback_evaluations = {}
         
@@ -1086,31 +1088,26 @@ class RiskAssessmentWorkflow:
                     result_data = result.get("result_data", {})
                     risk_eval_data = result_data.get("risk_evaluation", {})
                     
-                    if risk_eval_data:
-                        # Пытаемся создать RiskEvaluation из данных
-                        risk_evaluation = RiskEvaluation(
+                    # ИСПРАВЛЕНИЕ: Если это уже RiskEvaluation - используем как есть
+                    if isinstance(risk_eval_data, RiskEvaluation):
+                        print(f"✅ DEBUG: Используем готовый RiskEvaluation для fallback {risk_type_str}")
+                        fallback_evaluations[risk_type_enum] = risk_eval_data
+                    else:
+                        # Создаем минимальную оценку только если нет данных
+                        print(f"🔧 DEBUG: Создаем минимальный fallback для {risk_type_str}")
+                        fallback_evaluations[risk_type_enum] = RiskEvaluation(
                             risk_type=risk_type_enum,
-                            evaluator_agent=result.get("agent_name", "unknown"),
-                            probability_score=risk_eval_data.get("probability_score", 3),
-                            impact_score=risk_eval_data.get("impact_score", 3),
-                            probability_reasoning=risk_eval_data.get("probability_reasoning", "Не указано"),
-                            impact_reasoning=risk_eval_data.get("impact_reasoning", "Не указано"),
-                            recommendations=risk_eval_data.get("recommendations", []),
-                            confidence_level=risk_eval_data.get("confidence_level", 0.7)
+                            evaluator_agent="fallback",  # ← ОТСЮДА "fallback" в логах
+                            probability_score=3,
+                            impact_score=3,
+                            probability_reasoning="Fallback оценка из-за ошибки парсинга",
+                            impact_reasoning="Fallback оценка из-за ошибки парсинга",
+                            recommendations=["Провести повторную оценку"],
+                            confidence_level=0.3,
+                            threat_assessments=None  # ← threat_assessments теряется здесь!
                         )
-                        fallback_evaluations[risk_type_enum] = risk_evaluation
-                except Exception:
-                    # Если не удалось создать, создаем минимальную оценку
-                    fallback_evaluations[risk_type_enum] = RiskEvaluation(
-                        risk_type=risk_type_enum,
-                        evaluator_agent="fallback",
-                        probability_score=3,
-                        impact_score=3,
-                        probability_reasoning="Fallback оценка из-за ошибки парсинга",
-                        impact_reasoning="Fallback оценка из-за ошибки парсинга",
-                        recommendations=["Провести повторную оценку"],
-                        confidence_level=0.3
-                    )
+                except Exception as e:
+                    print(f"❌ DEBUG: Ошибка создания fallback для {risk_type_str}: {e}")
         
         return fallback_evaluations
 

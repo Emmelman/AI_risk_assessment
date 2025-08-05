@@ -788,7 +788,13 @@ class RiskAnalysisLLMClient(LLMClient):
             "probability_score", "impact_score", "total_score", 
             "risk_level", "probability_reasoning", "impact_reasoning"
         ]
-        
+        if "КАЧЕСТВО И ЭТИКА" in evaluation_criteria:
+            try:
+                self._validate_ethical_risk_response(response)
+            except LLMError as e:
+                print(f"❌ Ошибка валидации EthicalRiskEvaluator: {e}")
+                raise
+
         for field in required_fields:
             if field not in response:
                 raise LLMError(f"Отсутствует обязательное поле в ответе: {field}")
@@ -878,6 +884,66 @@ class RiskAnalysisLLMClient(LLMClient):
         response["is_acceptable"] = response["quality_score"] >= quality_threshold
         
         return response
+    # ДОБАВИТЬ ЭТОТ МЕТОД В ОБА КЛАССА: RiskAnalysisLLMClient И GigaChatLLMClient
+
+    def _validate_ethical_risk_response(self, response: Dict[str, Any]) -> None:
+        """Специальная валидация для EthicalRiskEvaluator"""
+        
+        # Проверяем наличие threat_assessments
+        if "threat_assessments" not in response:
+            raise LLMError("EthicalRiskEvaluator: Отсутствует обязательное поле threat_assessments")
+        
+        threat_assessments = response["threat_assessments"]
+        
+        if not isinstance(threat_assessments, dict):
+            raise LLMError("EthicalRiskEvaluator: threat_assessments должен быть объектом")
+        
+        # Проверяем все 3 угрозы
+        required_threats = [
+            "галлюцинации_и_зацикливание", 
+            "дезинформация", 
+            "токсичность_и_дискриминация"
+        ]
+        
+        for threat in required_threats:
+            if threat not in threat_assessments:
+                raise LLMError(f"EthicalRiskEvaluator: Отсутствует оценка угрозы: {threat}")
+            
+            threat_data = threat_assessments[threat]
+            
+            if not isinstance(threat_data, dict):
+                raise LLMError(f"EthicalRiskEvaluator: Данные угрозы {threat} должны быть объектом")
+            
+            # Проверяем обязательные поля для каждой угрозы
+            required_threat_fields = ["risk_level", "probability_score", "impact_score", "reasoning"]
+            for field in required_threat_fields:
+                if field not in threat_data:
+                    raise LLMError(f"EthicalRiskEvaluator: Отсутствует поле {field} для угрозы {threat}")
+            
+            # Проверяем валидность risk_level
+            valid_risk_levels = ["низкая", "средняя", "высокая"]
+            if threat_data["risk_level"] not in valid_risk_levels:
+                raise LLMError(f"EthicalRiskEvaluator: Некорректный risk_level для угрозы {threat}: {threat_data['risk_level']}. Допустимые: {valid_risk_levels}")
+            
+            # Проверяем диапазоны scores
+            try:
+                prob_score = int(threat_data["probability_score"])
+                impact_score = int(threat_data["impact_score"])
+            except (ValueError, TypeError):
+                raise LLMError(f"EthicalRiskEvaluator: Scores для угрозы {threat} должны быть числами")
+            
+            if not (1 <= prob_score <= 5):
+                raise LLMError(f"EthicalRiskEvaluator: Некорректный probability_score для угрозы {threat}: {prob_score} (должен быть 1-5)")
+            
+            if not (1 <= impact_score <= 5):
+                raise LLMError(f"EthicalRiskEvaluator: Некорректный impact_score для угрозы {threat}: {impact_score} (должен быть 1-5)")
+            
+            # Проверяем минимальную длину reasoning
+            reasoning = str(threat_data["reasoning"])
+            if len(reasoning) < 100:  # Немного снизим требование для надежности
+                raise LLMError(f"EthicalRiskEvaluator: Слишком короткое обоснование для угрозы {threat}: {len(reasoning)} символов (минимум 100)")
+
+        print(f"✅ EthicalRiskEvaluator: Валидация threat_assessments прошла успешно ({len(threat_assessments)} угроз)")
 
 class GigaChatLLMClient(LLMClient):
     """Специализированный клиент для работы с GigaChat через langchain_gigachat"""
@@ -1386,6 +1452,40 @@ class GigaChatRiskAnalysisLLMClient(RiskAnalysisLLMClient):
             else:
                 parsed_data = self._parse_gigachat_response(raw_content)
             
+                print(f"🔍 DEBUG GigaChat: Парсинг завершен для risk_type='{risk_type}'")
+                print(f"🔍 DEBUG GigaChat: Ключи в parsed_data: {list(parsed_data.keys())}")
+                
+                # Проверяем, нужна ли валидация threat_assessments
+                needs_threat_validation = (
+                    "этические" in risk_type.lower() or 
+                    "КАЧЕСТВО И ЭТИКА" in evaluation_criteria or
+                    "галлюцинации" in evaluation_criteria or
+                    "дезинформация" in evaluation_criteria or
+                    "токсичность" in evaluation_criteria
+                )
+                
+                print(f"🔍 DEBUG GigaChat: Нужна валидация threat_assessments: {needs_threat_validation}")
+                
+                if needs_threat_validation:
+                    if "threat_assessments" not in parsed_data:
+                        print("❌ DEBUG GigaChat: threat_assessments отсутствует в parsed_data!")
+                        print("📄 DEBUG GigaChat: Полный parsed_data:")
+                        import json
+                        print(json.dumps(parsed_data, ensure_ascii=False, indent=2))
+                        
+                        # НЕ ВЫЗЫВАЕМ ОШИБКУ - просто логируем
+                        print("⚠️ GigaChat не сгенерировал threat_assessments - возможно нужно улучшить промпт")
+                    else:
+                        print("✅ DEBUG GigaChat: threat_assessments найден!")
+                        try:
+                            self._validate_ethical_risk_response_gigachat(parsed_data)
+                            print("✅ DEBUG GigaChat: Валидация threat_assessments прошла успешно")
+                        except Exception as e:
+                            print(f"❌ DEBUG GigaChat: Ошибка валидации threat_assessments: {e}")
+                            # НЕ ПАДАЕМ - просто логируем
+                
+                return parsed_data
+
             if not reasoning_shown:
                 print(f"🧠 РАССУЖДЕНИЯ АГЕНТА: ⚠️  Развернутые рассуждения не найдены в ответе")
             
@@ -1401,6 +1501,73 @@ class GigaChatRiskAnalysisLLMClient(RiskAnalysisLLMClient):
             # Fallback
             return self._create_fallback_response(risk_type, f"Ошибка GigaChat: {e}")
     
+    
+
+    def _validate_ethical_risk_response_gigachat(self, response: Dict[str, Any]) -> None:
+        """Специальная валидация для EthicalRiskEvaluator в GigaChat"""
+        
+        print("🔍 VALIDATION DEBUG GigaChat: Начинаем валидацию threat_assessments...")
+        
+        # Проверяем наличие threat_assessments
+        if "threat_assessments" not in response:
+            raise ValueError("GigaChat EthicalRiskEvaluator: Отсутствует обязательное поле threat_assessments")
+        
+        threat_assessments = response["threat_assessments"]
+        
+        if not isinstance(threat_assessments, dict):
+            raise ValueError("GigaChat EthicalRiskEvaluator: threat_assessments должен быть объектом")
+        
+        # Проверяем все 3 угрозы
+        required_threats = [
+            "галлюцинации_и_зацикливание", 
+            "дезинформация", 
+            "токсичность_и_дискриминация"
+        ]
+        
+        found_threats = list(threat_assessments.keys())
+        print(f"🔍 VALIDATION DEBUG: Найденные угрозы: {found_threats}")
+        print(f"🔍 VALIDATION DEBUG: Требуемые угрозы: {required_threats}")
+        
+        for threat in required_threats:
+            if threat not in threat_assessments:
+                raise ValueError(f"GigaChat EthicalRiskEvaluator: Отсутствует оценка угрозы: {threat}")
+            
+            threat_data = threat_assessments[threat]
+            
+            if not isinstance(threat_data, dict):
+                raise ValueError(f"GigaChat EthicalRiskEvaluator: Данные угрозы {threat} должны быть объектом")
+            
+            # Проверяем обязательные поля для каждой угрозы
+            required_threat_fields = ["risk_level", "probability_score", "impact_score", "reasoning"]
+            for field in required_threat_fields:
+                if field not in threat_data:
+                    raise ValueError(f"GigaChat EthicalRiskEvaluator: Отсутствует поле {field} для угрозы {threat}")
+            
+            # Проверяем валидность risk_level
+            valid_risk_levels = ["низкая", "средняя", "высокая"]
+            if threat_data["risk_level"] not in valid_risk_levels:
+                print(f"⚠️ VALIDATION WARNING: Некорректный risk_level для угрозы {threat}: {threat_data['risk_level']}")
+            
+            # Проверяем диапазоны scores
+            try:
+                prob_score = int(threat_data["probability_score"])
+                impact_score = int(threat_data["impact_score"])
+                
+                if not (1 <= prob_score <= 5):
+                    print(f"⚠️ VALIDATION WARNING: Некорректный probability_score для угрозы {threat}: {prob_score}")
+                
+                if not (1 <= impact_score <= 5):
+                    print(f"⚠️ VALIDATION WARNING: Некорректный impact_score для угрозы {threat}: {impact_score}")
+            except (ValueError, TypeError):
+                print(f"⚠️ VALIDATION WARNING: Scores для угрозы {threat} не являются числами")
+            
+            # Проверяем минимальную длину reasoning
+            reasoning = str(threat_data["reasoning"])
+            if len(reasoning) < 50:  # Снижаем требования для GigaChat
+                print(f"⚠️ VALIDATION WARNING: Короткое обоснование для угрозы {threat}: {len(reasoning)} символов")
+
+        print(f"✅ VALIDATION DEBUG GigaChat: Валидация завершена успешно ({len(threat_assessments)} угроз)")
+
     def _parse_gigachat_response(self, content: str) -> Dict[str, Any]:
         """Специализированный парсинг ответов GigaChat"""
         

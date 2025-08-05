@@ -147,17 +147,81 @@ class RiskAssessmentLogger:
         bound_logger = self.bind_context(assessment_id, agent_name)
         bound_logger.warning(f"🔄 Повторная попытка агента: {task_type} (попытка {attempt})")
     
+    # В ФАЙЛЕ src/utils/logger.py НАЙТИ МЕТОД log_risk_evaluation И ЗАМЕНИТЬ НА:
+
     def log_risk_evaluation(
-        self, 
-        agent_name: str, 
-        assessment_id: str, 
-        risk_type: str, 
-        score: int, 
-        level: str
-    ):
-        """Логирование результата оценки риска"""
-        bound_logger = self.bind_context(assessment_id, agent_name)
-        bound_logger.info(f"📊 Оценка риска {risk_type}: {score} баллов ({level})")
+        self,
+        evaluator_name: str,
+        assessment_id: str,
+        risk_type: str,
+        total_score: int,
+        risk_level: str,
+        threat_assessments: Optional[Dict[str, Any]] = None  # НОВЫЙ ПАРАМЕТР
+    ) -> None:
+        """ИСПРАВЛЕННОЕ логирование результатов оценки рисков с threat_assessments"""
+        
+        # Создаем bound_logger как в других методах класса
+        bound_logger = self.bind_context(assessment_id, evaluator_name)
+        
+        log_data = {
+            "event": "risk_evaluation_completed",
+            "evaluator": evaluator_name,
+            "assessment_id": assessment_id,
+            "risk_type": risk_type,
+            "total_score": total_score,
+            "risk_level": risk_level,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # НОВАЯ ЛОГИКА: Добавляем информацию о threat_assessments
+        if threat_assessments:
+            threat_summary = {}
+            total_threats = len(threat_assessments)
+            
+            for threat_name, threat_data in threat_assessments.items():
+                if isinstance(threat_data, dict):
+                    threat_summary[threat_name] = {
+                        "risk_level": threat_data.get("risk_level", "unknown"),
+                        "total_score": threat_data.get("probability_score", 0) * threat_data.get("impact_score", 0)
+                    }
+                else:
+                    # Если threat_data это объект ThreatAssessment
+                    threat_summary[threat_name] = {
+                        "risk_level": getattr(threat_data, 'risk_level', 'unknown'),
+                        "total_score": getattr(threat_data, 'probability_score', 0) * getattr(threat_data, 'impact_score', 0)
+                    }
+            
+            log_data["threat_assessments_summary"] = threat_summary
+            log_data["threats_evaluated"] = total_threats
+            
+            message = f"📊 Оценка риска завершена: {risk_type} = {total_score} баллов ({risk_level}) + {total_threats} детальных угроз"
+            
+            # Используем bound_logger.info (это стандартный метод loguru)
+            bound_logger.info(message, **log_data)
+            
+            # Логирование каждой угрозы отдельно
+            for threat_name, threat_data in threat_assessments.items():
+                if isinstance(threat_data, dict):
+                    threat_score = threat_data.get("probability_score", 0) * threat_data.get("impact_score", 0)
+                    threat_risk_level = threat_data.get("risk_level", "unknown")
+                else:
+                    threat_score = getattr(threat_data, 'probability_score', 0) * getattr(threat_data, 'impact_score', 0)
+                    threat_risk_level = getattr(threat_data, 'risk_level', 'unknown')
+                
+                threat_message = f"  🎯 Угроза '{threat_name}': {threat_score} баллов ({threat_risk_level})"
+                
+                bound_logger.debug(threat_message, **{
+                    "event": "individual_threat_evaluation",
+                    "evaluator": evaluator_name,
+                    "assessment_id": assessment_id,
+                    "threat_name": threat_name,
+                    "threat_score": threat_score,
+                    "threat_risk_level": threat_risk_level
+                })
+        else:
+            # Обычное логирование без threat_assessments
+            message = f"📊 Оценка риска завершена: {risk_type} = {total_score} баллов ({risk_level})"
+            bound_logger.info(message, **log_data)
     
     def log_critic_feedback(
         self, 
